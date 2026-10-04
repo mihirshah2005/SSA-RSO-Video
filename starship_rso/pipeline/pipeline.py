@@ -82,6 +82,7 @@ class Pipeline:
         self._reg_fail_streak = 0
         self.soft_cut_frames = 5
         self.release_ids: dict = {}
+        self._warming = True
 
     def _make_detector(self, shape):
         d = self.cfg.detector
@@ -118,6 +119,7 @@ class Pipeline:
             self.masks.reset()
             self.history.clear()
             self.detector.reset()
+            self.registrar.reset()
             self._prev_u8 = None
             self._last_slow_t = -np.inf
         tm["prep"] = _ms(t_start)
@@ -136,13 +138,19 @@ class Pipeline:
         tm["register"] = _ms(t1)
 
         t1 = time.perf_counter()
-        valid = self.masks.update(gray, t, reg.H, reg.valid)
+        valid = self.masks.update(gray, t, reg.H, reg.valid, reg.static_background)
         tm["mask"] = _ms(t1)
 
         t1 = time.perf_counter()
         # until the vehicle mask exists, the ship's own texture slides against the registered Earth
         # and looks like motion: the detector only fills its frame history and reports nothing
         warming = not self.masks.ready
+        if not warming and self._warming:
+            # first frame with a vehicle mask: frames stored during warm-up must not offer the
+            # background behind the ship's edge to the motion residual
+            self.history.restrict(valid)
+            self.detector.restrict_history(valid)
+        self._warming = warming
         dets = self.detector.detect(gray, self.history.items(), valid, frame_index=index, t=t,
                                     static_background=reg.static_background, report=not warming)
         tm["detect"] = _ms(t1)

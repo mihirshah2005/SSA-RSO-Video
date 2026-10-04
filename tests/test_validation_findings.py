@@ -98,3 +98,76 @@ def test_sparse_clustered_corners_do_not_overfit_perspective(rng):
         d = apply_h(r.H, grid) - grid
         errs.append(np.max(np.hypot(d[:, 0], d[:, 1] + 2.0)))
     assert np.max(errs) < 0.5, np.round(errs, 2)
+
+
+# ---------------------------------------------------------------- second review pass
+def test_faint_defocused_disc_is_measured_as_a_disc():
+    """A near-field particle can be a large disc only 1-2 noise sigma above the background per
+    pixel; re-measurement used to lock onto one noise spike (sigma ~0.3 px, positions off by 14 px)."""
+    h, w = 270, 480
+    yy, xx = np.mgrid[0:h, 0:w]
+    for seed in range(3):
+        rng = np.random.default_rng(seed)
+        g = (20 + rng.normal(0, 3.0, (h, w)) + 4.0 * (np.hypot(xx - 240.3, yy - 130.6) <= 20)).astype(np.float32)
+        det = ClassicalDetector(ClassicalCfg(clutter_thresh=5.0), (h, w))
+        d = det.detect(g, [], np.ones((h, w), bool), static_background=True)
+        near = [x for x in d if np.hypot(x.x - 240.3, x.y - 130.6) < 25]
+        assert near, "disc not detected"
+        b = max(near, key=lambda x: x.score)
+        assert b.sigma > 6.0 and np.hypot(b.x - 240.3, b.y - 130.6) < 2.0, (b.sigma, b.x, b.y)
+
+
+def test_measurement_near_the_image_edge_is_not_biased_by_repeated_pixels():
+    from starship_rso.vision.classical import remeasure
+    from starship_rso.types import Detection
+
+    h, w = 120, 160
+    g = np.full((h, w), 10.0, np.float32)
+    _spot(g, 4.0, 60.0, 100.0, 3.0)
+    d = remeasure(g, [Detection(x=4.0, y=60.0, score=5, confidence=0.9, sigma=3.0, pos_sigma=0.3)], noise=1.0)
+    assert d and abs(d[0].x - 4.0) < 0.25, d[0].x
+
+
+def test_noise_level_is_not_carried_into_a_new_shot():
+    h, w = 200, 300
+    rng = np.random.default_rng(0)
+    det = ClassicalDetector(ClassicalCfg(), (h, w))
+    det.detect((30 + rng.normal(0, 8.0, (h, w))).astype(np.float32), [], np.ones((h, w), bool), static_background=True)
+    det.reset()
+    quiet = (30 + rng.normal(0, 0.7, (h, w))).astype(np.float32)
+    det.detect(quiet, [], np.ones((h, w), bool))  # first frame of the new shot finds nothing
+    assert det._noise_hp is not None and det._noise_hp < 1.5
+
+
+def test_frames_stored_during_mask_warmup_get_the_learned_vehicle_mask():
+    """After warm-up, Earth points that were behind the ship in stored frames looked available to
+    the motion residual: a band of false motion above the ship's edge for the first frames."""
+    import cv2
+
+    h, w = 270, 480
+    rng = np.random.default_rng(3)
+    tex = cv2.GaussianBlur(rng.normal(0, 1, (h + 400, w)).astype(np.float32), (0, 0), 1.5)
+    tex = np.clip(110 + 60 * tex / tex.std(), 0, 255).astype(np.float32)
+    veh = np.zeros((h, w), bool)
+    veh[200:, :] = True  # camera-fixed vehicle at the bottom; the Earth emerges from behind it
+    vy = 6.0
+    T = np.array([[1, 0, 0], [0, 1, -vy], [0, 0, 1.0]])
+    cfg = ClassicalCfg()
+    det = ClassicalDetector(cfg, (h, w))
+    hist = History(max(cfg.history))
+    band = []
+    for k in range(20):
+        g = tex[int(k * vy) : int(k * vy) + h].copy()
+        g[veh] = 15.0 + 3 * rng.normal(0, 1, veh.sum())
+        g = (g + rng.normal(0, 1.0, g.shape)).astype(np.float32)
+        hist.advance(Registration(T, k > 0))
+        warming = k < 10
+        valid = np.ones((h, w), bool) if warming else ~veh
+        if k == 10:  # what the pipeline does on its first frame with a vehicle mask
+            hist.restrict(valid)
+            det.restrict_history(valid)
+        d = det.detect(g, hist.items(), valid, frame_index=k, report=not warming)
+        if not warming:
+            band.append(sum(1 for x in d if 150 <= x.y < 200 and x.score >= 0.6))
+        hist.push(g, valid)
+    assert sum(band) == 0, band

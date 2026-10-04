@@ -12,7 +12,7 @@ masks:
 registration: {work_width: 960, max_corners: 600, quality: 0.01, min_distance: 12,
   lk_win: 21, lk_levels: 3, fb_thresh_px: 1.0, ransac_thresh_px: 1.5, min_inliers: 25,
   model: homography, full_model_min_inliers: 150, full_model_min_spread: 0.3, affine_min_inliers: 60,
-  affine_min_spread: 0.15, static_px: 0.4}
+  affine_min_spread: 0.15, static_px: 0.4, min_moving_spread: 0.05}
 scenecut: {work_width: 320, hist_corr_thresh: 0.55, mean_abs_thresh: 40.0}
 detector:
   type: classical

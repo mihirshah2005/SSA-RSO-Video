@@ -65,7 +65,7 @@ def build_frame_store(cfg: Config, video: str, out_dir: str | Path, start_s=None
             r = reg.estimate(prev_u8, u8, masks.valid, max(t - prev_t, 1e-3))
         else:
             r = Registration(np.eye(3), False, reason="start of shot")
-        valid = masks.update(g, t, r.H, r.valid)
+        valid = masks.update(g, t, r.H, r.valid, r.static_background)
         H_acc = (r.H if r.valid else np.eye(3)) @ H_acc
         ok_acc = ok_acc and (r.valid or r.static_background)
         prev_u8, prev_t = u8, t
@@ -125,16 +125,22 @@ def labels_from_run(run_dir: str | Path, scale: float = 1.0, min_obs: int = 8,
             pts.setdefault(str(p["f"] - frame_offset), []).append(
                 [x, y, float(np.clip(p["sigma"] * scale, 0.8, 6.0)), tr["uid"], tr["category"]])
     ign: dict[str, list] = {}
+    skip: list[str] = []
     fpath = run / "frames.jsonl"
     if fpath.exists():
         with open(fpath, encoding="utf-8") as fh:
             for line in fh:
                 fr = json.loads(line)
+                if fr.get("warm"):
+                    # the run reported nothing while learning the vehicle mask: no labels exist
+                    # for this frame, so it must not be taught as empty background
+                    skip.append(str(fr["f"] - frame_offset))
+                    continue
                 rows = [[(d["x"] + 0.5) * scale - 0.5, (d["y"] + 0.5) * scale - 0.5, max(3.0, 3 * d["sigma"] * scale)]
                         for d in fr["dets"] if ignore == "all" or d["confidence"] < 0.5]
                 if rows:
                     ign[str(fr["f"] - frame_offset)] = rows
-    return {"points": pts, "ignore": ign, "source": f"pseudo-labels from {run}"}
+    return {"points": pts, "ignore": ign, "skip_frames": skip, "source": f"pseudo-labels from {run}"}
 
 
 def labels_from_cvat(xml_path: str | Path, scale: float = 1.0, frame_offset: int = 0) -> dict:
@@ -234,6 +240,7 @@ class HeatmapWindowDataset:
             labels = json.loads((sd / "labels.json").read_text()) if (sd / "labels.json").exists() else {"points": {}, "ignore": {}}
             splits = json.loads((sd / "splits.json").read_text()) if (sd / "splits.json").exists() else None
             allowed = set(splits[split]) if splits else {f["i"] for f in meta["frames"]}
+            skip = set(labels.get("skip_frames", []))
             si = len(self.stores)
             self.stores.append((sd, meta, labels))
             fr = meta["frames"]
@@ -243,7 +250,7 @@ class HeatmapWindowDataset:
                     continue
                 if any(f["shot"] != fr[j]["shot"] for f in win) or not all(f["reg_ok"] for f in win[1:]):
                     continue
-                if not fr[j].get("mask_ready", True):
+                if not fr[j].get("mask_ready", True) or str(fr[j]["i"]) in skip:
                     continue  # vehicle mask still being learned: labels from a run would be missing here
                 self.items.append((si, j))
         self.pos_items = [it for it in self.items if self.stores[it[0]][2]["points"].get(str(self.stores[it[0]][1]["frames"][it[1]]["i"]))]

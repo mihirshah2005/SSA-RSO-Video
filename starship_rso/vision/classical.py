@@ -83,68 +83,103 @@ def _mask_of(item) -> np.ndarray | None:
     return item[3] if len(item) > 3 else None
 
 
+def _row_median(a: np.ndarray) -> np.ndarray:
+    """Median of each row ignoring NaN (0 for an all-NaN row); fast when no NaN is present."""
+    nan = np.isnan(a)
+    if not nan.any():
+        return np.median(a, axis=1)
+    out = np.median(np.where(nan, 0.0, a), axis=1)
+    for i in np.nonzero(nan.any(axis=1))[0]:  # only windows that reach past the image edge
+        row = a[i][~nan[i]]
+        out[i] = float(np.median(row)) if row.size else 0.0
+    return out
+
+
 def _measure_group(gray: np.ndarray, cx: np.ndarray, cy: np.ndarray, pol: np.ndarray, hw: int,
                    noise: float) -> dict[str, np.ndarray]:
     """Measure several objects with the same window half-width ``hw`` at once.
 
     For each window: background = median of the window border; the object is the
-    8-connected region above max(20% of its own peak, 2 x noise) that contains the
-    brightest pixel near the window centre. Moments of that region give position,
-    size and shape; flux sums the connected region above 2 x noise. Neighbouring
-    texture or another object in the window does not count. Windows are labelled
-    together as one mosaic (separated by empty rows), so this costs two
-    ``connectedComponents`` calls per group. Pixel indices are clipped at the image
-    border (edge pixels repeat).
+    8-connected region above max(20% of its own peak, 2 x noise, 1.5 x the robust spread
+    of the border) that contains the brightest point near the window centre (the
+    border spread is the local texture, so a dot on clouds does not merge with them). In large windows, seed, threshold and
+    region come from a k x k box-smoothed copy (k grows with the window, noise
+    falls by k), so a faint defocused disc whose single pixels sit at 1-2 noise
+    sigma is still found as a disc rather than as one noise spike; the box's own
+    variance is removed from the moments. Moments of the region give position,
+    size and shape; flux sums the raw signal over the connected region above the
+    noise level. Neighbouring texture or another object does not count. Pixels
+    outside the image are excluded (not repeated). Windows are labelled together
+    as one mosaic separated by empty rows: two ``connectedComponents`` calls per group.
     """
+    from scipy.ndimage import uniform_filter
+
     h, w = gray.shape
     n, S = len(cx), 2 * hw + 1
     r = np.arange(-hw, hw + 1)
-    yy = np.clip(np.rint(cy).astype(int)[:, None] + r[None], 0, h - 1)  # (n, S)
-    xx = np.clip(np.rint(cx).astype(int)[:, None] + r[None], 0, w - 1)
-    v = gray[yy[:, :, None], xx[:, None, :]].astype(np.float64) * pol[:, None, None]  # (n, S, S)
+    yr = np.rint(cy).astype(int)[:, None] + r[None]  # (n, S) unclipped
+    xr = np.rint(cx).astype(int)[:, None] + r[None]
+    inside = ((yr >= 0) & (yr < h))[:, :, None] & ((xr >= 0) & (xr < w))[:, None, :]  # (n, S, S)
+    yy, xx = np.clip(yr, 0, h - 1), np.clip(xr, 0, w - 1)
+    v = gray[yy[:, :, None], xx[:, None, :]].astype(np.float64) * pol[:, None, None]
+    v = np.where(inside, v, np.nan)
     border = np.concatenate([v[:, 0], v[:, -1], v[:, 1:-1, 0], v[:, 1:-1, -1]], axis=1)
-    v -= np.median(border, axis=1)[:, None, None]
+    bg = _row_median(border)
+    v = np.nan_to_num(v - bg[:, None, None], nan=0.0)  # outside: background level
+    k = 2 * (hw // 9) + 1  # 1 for point sources (hw <= 8), up to 5 for the largest windows
+    vs = uniform_filter(v, size=(1, k, k), mode="nearest") if k > 1 else v
+    nk = noise / k  # noise of a k x k mean
     r0 = max(1, min(hw - 1, hw // 3))
-    c = v[:, hw - r0 : hw + r0 + 1, hw - r0 : hw + r0 + 1].reshape(n, -1)
-    k = np.argmax(c, axis=1)
-    iy, ix = k // (2 * r0 + 1) + hw - r0, k % (2 * r0 + 1) + hw - r0
+    c = np.where(inside, vs, -np.inf)[:, hw - r0 : hw + r0 + 1, hw - r0 : hw + r0 + 1].reshape(n, -1)
+    j = np.argmax(c, axis=1)
+    iy, ix = j // (2 * r0 + 1) + hw - r0, j % (2 * r0 + 1) + hw - r0
     ar = np.arange(n)
-    peak = v[ar, iy, ix]
-    thr = np.maximum(0.2 * peak, 2.0 * noise)
+    peak_s = vs[ar, iy, ix]
+    # background variation seen on the window border: noise on black sky, texture on clouds.
+    # Requiring the object to stand above it stops a dot from merging with the clouds around it.
+    bs = np.concatenate([vs[:, 0], vs[:, -1], vs[:, 1:-1, 0], vs[:, 1:-1, -1]], axis=1)
+    bin_ = np.concatenate([inside[:, 0], inside[:, -1], inside[:, 1:-1, 0], inside[:, 1:-1, -1]], axis=1)
+    bs = np.where(bin_, bs, np.nan)
+    spread = 1.4826 * _row_median(np.abs(bs - _row_median(bs)[:, None]))
+    thr = np.maximum.reduce([0.2 * peak_s, np.full(n, 2.0 * nk), 1.5 * spread])
 
     def region(mask: np.ndarray) -> np.ndarray:
         mosaic = np.zeros((n, S + 1, S), np.uint8)
-        mosaic[:, :S] = mask
+        mosaic[:, :S] = mask & inside
         _, lab = cv2.connectedComponents(mosaic.reshape(n * (S + 1), S), connectivity=8)
         lab = lab.reshape(n, S + 1, S)[:, :S]
         seed = lab[ar, iy, ix]
         return (lab == seed[:, None, None]) & (seed[:, None, None] > 0)
 
-    comp = region(v > thr[:, None, None])
-    wts = np.where(comp, v - thr[:, None, None], 0.0)
+    comp = region(vs > thr[:, None, None])
+    wts = np.where(comp, vs - thr[:, None, None], 0.0)
     tot = wts.sum((1, 2))
-    ok = (peak > thr) & (tot > 0)
+    ok = (peak_s > thr) & (tot > 0)
     ts = np.where(ok, tot, 1.0)
     gx, gy = xx[:, None, :].astype(np.float64), yy[:, :, None].astype(np.float64)
     mx = (wts * gx).sum((1, 2)) / ts
     my = (wts * gy).sum((1, 2)) / ts
     dx, dy = gx - mx[:, None, None], gy - my[:, None, None]
-    ixx = (wts * dx * dx).sum((1, 2)) / ts
-    iyy = (wts * dy * dy).sum((1, 2)) / ts
+    box_var = (k * k - 1) / 12.0  # variance added by the k x k box
+    ixx = np.maximum((wts * dx * dx).sum((1, 2)) / ts - box_var, 0.0)
+    iyy = np.maximum((wts * dy * dy).sum((1, 2)) / ts - box_var, 0.0)
     ixy = (wts * dx * dy).sum((1, 2)) / ts
     tr = ixx + iyy
-    flux = np.where(region(v > 2.0 * noise), v, 0.0).sum((1, 2))
+    flux = np.where(region(vs > 2.0 * nk), v, 0.0).sum((1, 2))
+    peak = np.where(comp, v, -np.inf).max((1, 2))
     return {
         "ok": ok,
         "x": mx,
         "y": my,
-        # weights above a threshold under-estimate a Gaussian's width; small bias, comparable across scales
+        # weights above a threshold under-estimate a Gaussian's width (about 0.7x); the bias is the
+        # same whichever scale or detector found the object, and the category rules use this estimator
         "sigma": np.sqrt(np.maximum(tr / 2.0, 0.09)),
         "ellipticity": np.where(tr > 1e-9, np.sqrt((ixx - iyy) ** 2 + 4 * ixy**2) / np.maximum(tr, 1e-9), 0.0),
         "flux": flux,
-        "peak": peak,
+        "peak": np.where(ok, peak, peak_s),
         "area": comp.sum((1, 2)),
     }
+
 
 def estimate_noise(gray: np.ndarray, rng: np.random.Generator, n: int = 4000) -> float:
     """Per-pixel noise (grey levels) from a sparse Laplacian sample; robust to stars and texture edges."""
@@ -155,20 +190,26 @@ def estimate_noise(gray: np.ndarray, rng: np.random.Generator, n: int = 4000) ->
     return max(robust_sigma(lap, floor=0.3) / np.sqrt(1.25), 0.3)
 
 
-def remeasure(gray: np.ndarray, dets: list[Detection], noise: float, iters: int = 6) -> None:
-    """Centroid, size and flux of detections on the full-resolution image (in place).
+def remeasure(gray: np.ndarray, dets: list[Detection], noise: float, iters: int = 6) -> list[Detection]:
+    """Centroid, size and flux of detections on the full-resolution image.
 
     Uses :func:`_measure_group`. This makes size and flux comparable whichever
     scale or detector found the object (moments on a coarse top-hat are dominated
     by its positive noise floor). The window follows the measured size, so a
     detection triggered by one edge or corner of a resolved object converges on
-    the whole object; a point source settles after one or two passes.
+    the whole object; a point source settles after one or two passes. Detections
+    with nothing measurable above the noise are dropped: their placeholder size
+    and flux would not be comparable with the others and would corrupt track features.
+    Returns the measured detections (updated in place).
     """
     if not dets:
-        return
+        return []
+
+    bins = np.array([3, 5, 8, 12, 17, 24])  # few distinct window sizes: few vectorised groups
 
     def half_width(sig: np.ndarray) -> np.ndarray:
-        return np.clip(np.rint(3 * np.maximum(sig, 1.0)) + 2, 3, 24).astype(int)
+        want = np.clip(np.rint(3 * np.maximum(sig, 1.0)) + 2, 3, 24)
+        return bins[np.searchsorted(bins, want)]
 
     x = np.array([d.x for d in dets])
     y = np.array([d.y for d in dets])
@@ -194,12 +235,15 @@ def remeasure(gray: np.ndarray, dets: list[Detection], noise: float, iters: int 
             active[g] = (moved >= 0.3) | (half_width(sig[g]) != hw)
         if not active.any():
             break
+    out = []
     for k in np.nonzero(done)[0]:
         d = dets[k]
         d.x, d.y, d.sigma = float(x[k]), float(y[k]), float(sig[k])
         d.ellipticity, d.flux, d.peak = float(res["ellipticity"][k]), float(res["flux"][k]), float(res["peak"][k])
         d.area = int(res["area"][k])
         d.pos_sigma = float(np.clip(1.5 * d.sigma * noise / max(d.peak, noise), 0.1, 3.0))
+        out.append(d)
+    return out
 
 
 class ClassicalDetector:
@@ -220,14 +264,21 @@ class ClassicalDetector:
         # per-axis resize factors: w // ds need not divide exactly
         self._sxy = {sc.downsample: (max(1, w // sc.downsample) / w, max(1, h // sc.downsample) / h)
                      for sc in cfg.scales}
-        self._noise_hp = 1.0
+        self._noise_hp: float | None = None
         self._rng = np.random.default_rng(0)
         self.debug: dict[str, np.ndarray] = {}
+
+    def restrict_history(self, valid: np.ndarray) -> None:
+        """AND a camera-fixed mask into the coarse-scale history (see ``History.restrict``)."""
+        for dq in self._coarse.values():
+            for item in dq:
+                item[3] = item[3] & self._down_mask(valid, item[0].shape)
 
     def reset(self) -> None:
         self._sigma_app.clear()
         self._sigma_res.clear()
         self._clutter = None
+        self._noise_hp = None
         for d in self._coarse.values():
             d.clear()
         self._frame = 0
@@ -291,8 +342,7 @@ class ClassicalDetector:
         dets = self._merge(dets)
         dets.sort(key=lambda d: -d.score)
         dets = dets[: c.max_detections]
-        self._remeasure(gray, dets, recompute)
-        dets = self._absorb(dets)
+        dets = self._absorb(self._remeasure(gray, dets, recompute))
         for d in dets:
             d.frame_index, d.t = frame_index, t
         if want_debug:
@@ -548,10 +598,8 @@ class ClassicalDetector:
         return [d for d, ok in zip(dets, alive) if ok]
 
     # ------------------------------------------------------------ re-measure
-    def _remeasure(self, gray: np.ndarray, dets: list[Detection], recompute: bool) -> None:
+    def _remeasure(self, gray: np.ndarray, dets: list[Detection], recompute: bool) -> list[Detection]:
         """Full-resolution centroid, size and flux of every kept detection (see :func:`remeasure`)."""
-        if not dets:
-            return
-        if recompute:
+        if recompute or self._noise_hp is None:  # also on frames without detections: stays current
             self._noise_hp = estimate_noise(gray, self._rng)
-        remeasure(gray, dets, self._noise_hp)
+        return remeasure(gray, dets, self._noise_hp)

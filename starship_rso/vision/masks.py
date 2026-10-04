@@ -71,6 +71,7 @@ class StaticStructureMask:
         self._n = 0
         self._n_reg = 0
         self._reg_frac = 0.0
+        self._static_frac = 0.0  # recent fraction of frames whose background is fixed in the image
         self._mask = np.zeros(self.shape, bool)
         self._computed = False
 
@@ -80,9 +81,13 @@ class StaticStructureMask:
         return (not self.cfg.enabled) or self._computed
 
     def update(self, gray: np.ndarray, t: float, H_prev_to_cur: np.ndarray | None = None,
-               reg_valid: bool = False) -> np.ndarray:
+               reg_valid: bool = False, static_background: bool = False) -> np.ndarray:
+        """Add a frame. Only a registration of a *moving* background is evidence: when the
+        background is fixed in the image (black sky), the ship and the sky do not move relative
+        to each other and the steadiness/brightness rule is used instead."""
         if not self.cfg.enabled:
             return self._mask
+        reg_valid = reg_valid and not static_background
         small = cv2.resize(gray, self._small, interpolation=cv2.INTER_AREA).astype(np.float32)
         last = self._t_last if self._t_last is not None else t
         dt = max(t - last, 1e-3)
@@ -99,6 +104,7 @@ class StaticStructureMask:
             self._sq += a * (small * small - self._sq)
             self._grad += a * (grad - self._grad)
             self._reg_frac += a * ((1.0 if reg_valid else 0.0) - self._reg_frac)
+            self._static_frac += a * ((1.0 if static_background else 0.0) - self._static_frac)
             if reg_valid and H_prev_to_cur is not None and self._prev_small is not None:
                 Hs = _scaled_h(H_prev_to_cur, self._sx, self._sy)
                 warped = cv2.warpPerspective(self._prev_small, Hs, self._small, flags=cv2.INTER_LINEAR,
@@ -134,7 +140,15 @@ class StaticStructureMask:
             structure = self._du > self.vehicle_frac
         else:
             std = np.sqrt(np.maximum(self._sq - self._mean**2, 0.0))
-            structure = (std < c.std_thresh) & ((self._mean > c.bright_thresh) | textured)
+            if self._static_frac > 0.5:
+                # black sky: everything steady that is clearly above the sky level is structure,
+                # including a dark, finely textured hull that is neither bright nor textured at
+                # this resolution; moving objects have a high temporal spread and are kept
+                sky = float(np.percentile(self._mean, 5))
+                lift = max(6.0, 4.0 * float(np.median(std)))
+                structure = (std < c.std_thresh) & (self._mean > sky + lift)
+            else:
+                structure = (std < c.std_thresh) & ((self._mean > c.bright_thresh) | textured)
         m = structure.astype(np.uint8)
         m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
         n, lab, stats, _ = cv2.connectedComponentsWithStats(m, connectivity=8)
@@ -188,9 +202,9 @@ class MaskManager:
         return self.static.ready
 
     def update(self, gray: np.ndarray, t: float, H_prev_to_cur: np.ndarray | None = None,
-               reg_valid: bool = False) -> np.ndarray:
+               reg_valid: bool = False, static_background: bool = False) -> np.ndarray:
         """Update with the new frame and its registration; return the *valid* mask."""
-        vm = self.static.update(gray, t, H_prev_to_cur, reg_valid)
+        vm = self.static.update(gray, t, H_prev_to_cur, reg_valid, static_background)
         self.invalid = self.fixed | vm
         return ~self.invalid
 

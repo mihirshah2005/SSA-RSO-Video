@@ -50,7 +50,11 @@ class HeatmapDetector:
             self.model.half()
 
     def reset(self) -> None:
-        pass
+        self._noise = None  # a new shot may have a different noise level
+        self._n = 0
+
+    def restrict_history(self, valid) -> None:
+        pass  # uses only the shared History (restricted by the pipeline) and the current mask
 
     def _infer(self, stack: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         torch = self.torch
@@ -89,6 +93,9 @@ class HeatmapDetector:
         k = self.frames
         if not report or len(history) < k - 1 or not all(history[q][2] for q in range(k - 1)):
             return []
+        self._n += 1
+        if self._noise is None or self._n % 30 == 1:  # refreshed whether or not anything is found
+            self._noise = estimate_noise(gray, self._rng)
         h, w = gray.shape
         past = [cv2.warpPerspective(history[q][0], history[q][1], (w, h), flags=cv2.INTER_LINEAR,
                                     borderMode=cv2.BORDER_REPLICATE) for q in range(k - 2, -1, -1)]
@@ -112,11 +119,7 @@ class HeatmapDetector:
             ))
         # size, flux and shape measured exactly as for classical detections, so track features
         # (and the category rules or model trained on them) do not depend on the detector
-        self._n += 1
-        if self._noise is None or self._n % 30 == 1:
-            self._noise = estimate_noise(gray, self._rng)
-        remeasure(gray, dets, self._noise)  # starts from the network's sub-pixel position
-        return dets
+        return remeasure(gray, dets, self._noise)  # starts from the network's sub-pixel position
 
 
 class FusedDetector:
@@ -130,6 +133,10 @@ class FusedDetector:
     def reset(self) -> None:
         self.classical.reset()
         self.heatmap.reset()
+
+    def restrict_history(self, valid) -> None:
+        self.classical.restrict_history(valid)
+        self.heatmap.restrict_history(valid)
 
     def detect(self, gray, history, valid, frame_index=-1, t=0.0, want_debug=False, static_background=False,
                report=True):

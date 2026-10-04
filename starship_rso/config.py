@@ -76,6 +76,7 @@ class RegistrationCfg:
     affine_min_inliers: int = 60
     affine_min_spread: float = 0.15
     static_px: float = 0.4  # corners moving less than this (work px/frame) are treated as camera-fixed
+    min_moving_spread: float = 0.05  # moving inliers must cover this much of the image to be the background
 
 
 @dataclass

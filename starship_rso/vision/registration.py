@@ -63,6 +63,12 @@ class BackgroundRegistrar:
         self.work_size = (max(1, int(round(w * s))), max(1, int(round(h * s))))
         self.sx = self.work_size[0] / float(w)
         self.sy = self.work_size[1] / float(h)
+        self._low_qual: float | None = None  # noise-floor corner bar, reused for a few frames
+        self._low_qual_age = 0
+
+    def reset(self) -> None:
+        """Forget per-shot state (call at a camera cut)."""
+        self._low_qual, self._low_qual_age = None, 0
 
     def _work(self, gray_u8: np.ndarray) -> np.ndarray:
         if self.work_size == (self.shape[1], self.shape[0]):
@@ -140,11 +146,16 @@ class BackgroundRegistrar:
         tex_frac = float((mag[sel] > self.textured_grad).mean())
         ident = np.eye(3)
         pts = None
+        reuse = self._low_qual is not None and self._low_qual_age < 10
         if tex_frac > 0.002:
             pts = cv2.goodFeaturesToTrack(
-                p, maxCorners=c.max_corners, qualityLevel=c.quality, minDistance=c.min_distance, mask=mask, blockSize=7
+                p, maxCorners=c.max_corners, qualityLevel=self._low_qual if reuse else c.quality,
+                minDistance=c.min_distance, mask=mask, blockSize=7
             )
-        if pts is not None and len(pts) < 4 * c.full_model_min_inliers:
+            self._low_qual_age += 1
+        if not reuse:
+            self._low_qual = None
+        if not reuse and pts is not None and len(pts) < max(c.min_inliers, c.max_corners // 3):
             # Few corners: the strongest corner sets the (relative) quality bar, so weak cloud
             # texture on a smooth ocean is ignored. Ask again with a bar just above the noise:
             # pixel noise alone makes "corners" that LK follows with zero motion, so the bar is
@@ -159,14 +170,21 @@ class BackgroundRegistrar:
                                                    minDistance=c.min_distance, mask=mask, blockSize=7)
                     if more is not None and len(more) > len(pts):
                         pts = more
-        if pts is None or len(pts) < c.min_inliers:
-            # "black sky" needs both: no texture AND dark. A bright featureless field (smooth ocean,
-            # overexposed cloud) may well be moving; its motion is simply unmeasurable here.
-            level = float(np.median(p[sel])) if sel.any() else 0.0
-            if tex_frac < self.black_sky_frac and level < self.dark_level:
-                return Registration(ident, False, dt=dt, reason=f"black sky (texture {tex_frac:.3f})",
+                        # the scene changes slowly: keep this bar for the next frames (refreshed every 10)
+                        self._low_qual, self._low_qual_age = qual, 0
+        # "black sky" needs both: no texture AND dark. A bright featureless field (smooth ocean,
+        # overexposed cloud) may well be moving; its motion is simply unmeasurable here.
+        level = float(np.median(p[sel])) if sel.any() else 0.0
+        black_sky = tex_frac < self.black_sky_frac and level < self.dark_level
+
+        def too_few(reason: str, n: int = 0) -> Registration:
+            if black_sky:  # the few corners are objects crossing the sky, not the background
+                return Registration(ident, False, n_points=n, dt=dt, reason=f"black sky (texture {tex_frac:.3f})",
                                     static_background=True)
-            return Registration(ident, False, dt=dt, reason=f"unmeasurable motion (texture {tex_frac:.3f})")
+            return Registration(ident, False, n_points=n, dt=dt, reason=f"{reason} (texture {tex_frac:.3f})")
+
+        if pts is None or len(pts) < c.min_inliers:
+            return too_few("unmeasurable motion")
         lk = dict(
             winSize=(c.lk_win, c.lk_win),
             maxLevel=c.lk_levels,
@@ -178,18 +196,44 @@ class BackgroundRegistrar:
         ok = (st.ravel() == 1) & (st2.ravel() == 1) & (fb < c.fb_thresh_px)
         a, b = pts.reshape(-1, 2)[ok], nxt.reshape(-1, 2)[ok]
         if len(a) < c.min_inliers:
-            return Registration(ident, False, n_points=len(a), dt=dt, reason="too few consistent tracks")
+            return too_few("too few consistent tracks", len(a))
         # Camera-fixed structure (the ship) produces zero-motion corners that would pull the fit
-        # toward the identity. If enough corners move, the background is what moves: fit those.
+        # toward the identity. If enough corners move coherently over a real part of the image,
+        # the background is what moves: fit those. If the moving corners are few, scattered or
+        # incoherent (particles and payloads crossing a black sky in front of a textured ship),
+        # the background is fixed in the image.
         disp = np.linalg.norm(b - a, axis=1)
         moving = disp > c.static_px
-        static_scene = False
-        if moving.sum() >= c.min_inliers:
-            a, b = a[moving], b[moving]
-        elif np.median(disp) < c.static_px:
-            static_scene = True  # nothing moves: background fixed in the image
+        n_static = int((~moving).sum())
         usable = float(sel.sum()) if sel.any() else float(p.size)
-        Hw, inl, model = self._fit_supported(a, b, usable)
+        static = None
+        if n_static >= c.min_inliers:
+            static = Registration(ident, True, n_points=len(a), n_inliers=n_static,
+                                  rms=float(np.sqrt(np.mean(disp[~moving] ** 2)) / min(self.sx, self.sy)), dt=dt,
+                                  reason="background fixed in the image", static_background=True)
+        if moving.sum() >= c.min_inliers:
+            am, bm = a[moving], b[moving]
+            Hw, inl, model = self._fit_supported(am, bm, usable)
+            if Hw is not None:
+                n_in = int(inl.sum())
+                spread = cv2.contourArea(cv2.convexHull(am[inl].astype(np.float32))) / usable if n_in >= 3 else 0.0
+                # real motion is explained far better by the model than by "no motion"; LK noise on
+                # faint camera-fixed corners (a dark hull on black sky) is explained about equally well
+                r_id = float(np.sqrt(np.mean(np.sum((bm[inl] - am[inl]) ** 2, axis=1)))) if n_in else 0.0
+                r_mod = float(np.sqrt(np.mean(np.sum((apply_h(Hw, am[inl]) - bm[inl]) ** 2, axis=1)))) if n_in else 0.0
+                if (n_in >= max(c.min_inliers, 0.5 * len(am)) and spread >= c.min_moving_spread
+                        and r_id > 2.0 * r_mod + 0.1):
+                    a, b = am, bm
+                elif static is not None:
+                    return static
+                else:
+                    return Registration(ident, False, n_points=len(am), n_inliers=n_in, dt=dt, reason="incoherent motion")
+            elif static is not None:
+                return static
+        elif static is not None:
+            return static
+        else:
+            Hw, inl, model = self._fit_supported(a, b, usable)
         if Hw is None or inl is None:
             return Registration(ident, False, n_points=len(a), dt=dt, reason="model fit failed")
         n_in = int(inl.sum())
@@ -206,7 +250,6 @@ class BackgroundRegistrar:
             dt=dt,
             pts_prev=self._to_full(a[inl]),
             pts_cur=self._to_full(b[inl]),
-            static_background=static_scene,
         )
 
 
@@ -232,6 +275,18 @@ class History:
         """Store a processed frame and its valid mask (pixels that were usable background)."""
         if self.maxlen > 0:
             self._frames.appendleft((gray, np.eye(3), True, valid))
+
+    def restrict(self, valid: np.ndarray) -> None:
+        """AND a camera-fixed mask (e.g. a newly learned vehicle mask) into every stored frame's mask.
+
+        The vehicle does not move in the image, so the current mask applies to past frames as
+        they are; without this, frames stored before the mask existed would make the background
+        behind the ship's edge look available to the motion residual.
+        """
+        self._frames = deque(
+            ((g, Hk, v, valid.copy() if m is None else (m & valid)) for g, Hk, v, m in self._frames),
+            maxlen=self._frames.maxlen,
+        )
 
     def items(self):
         return list(self._frames)
