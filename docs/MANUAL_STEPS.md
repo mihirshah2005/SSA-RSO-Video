@@ -10,8 +10,10 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[train,dev]"          # numpy, opencv, sgp4, torch (MPS on Apple silicon), sklearn, pytest
 brew install ffmpeg yt-dlp tesseract   # video tools and optional HUD OCR
 pip install pytesseract av             # optional: OCR + exact timestamps
-python -m pytest -q                    # 47 tests, about 1 minute; all must pass
+python -m pytest -q                    # 69 tests, about 1 minute; all must pass
 ```
+
+- On macOS, `opencv-python` and `av` each bundle FFmpeg's `libavdevice`, so every command prints two `objc[...] Class AVF... is implemented in both` lines. They concern camera/microphone capture, which this project never uses, so they are harmless here. To silence them, `export RSO_VIDEO_BACKEND=opencv` (PyAV is then never imported; timestamps come from OpenCV, which is exact for constant-frame-rate files like the rebroadcast).
 
 ## 1. Synthetic demo (no downloads needed)
 
@@ -46,16 +48,28 @@ rso ocr -c configs/default.yaml -c configs/flight14.yaml --video data/videos/f14
 ```
 
 - **Check** `layout_check.png`: red must cover the telemetry band and logo; green boxes must enclose the clock, speed and altitude digits. Edit `hud:` and `masks.hud_rects` in `configs/flight14.yaml` if not.
-- Paste the printed anchors into `timemap.anchors` (replace the approximate screenshot anchor).
-- Note every camera change and replay in the deployment window (a shot list). The pipeline resets tracks at cuts, but replays need separate anchors.
-- For the camera that looks at the payload door, set `deployment.door_xy: [x, y]` (normalised image position of the door, from `layout_check.png`). Without it the "first seen at the door" cue is off and payloads are recognised only by being resolved, slow and steady.
+- Paste the printed anchors into `timemap.anchors` (replace the approximate screenshot anchor). **Done for Flight 14**: MET = video - 15.9 s across 2040-3900 s, one segment, no replays.
+- Shot list for the deployment window (video 2063-3895 s = T+34:07 to T+1:04:39):
+
+```bash
+rso shots -c configs/default.yaml -c configs/flight14.yaml --video data/videos/f14_rebroadcast.mp4 --start 2040 --end 3900
+```
+
+  It prints each camera shot (video and MET range, mean brightness) and writes `data/shots/shots.csv` and `data/shots/contact_sheet.jpg`. Shots under 1 s are flagged as flashes or graphics.
+- For the camera that looks at the payload door, set `deployment.door_xy: [x, y]` (normalised image position of the door). Without it the "first seen at the door" cue is off and payloads are recognised only by being resolved, slow and steady.
 
 ## 4. First real run (classical detector)
 
 ```bash
-rso run -c configs/default.yaml -c configs/flight14.yaml --video data/videos/f14_rebroadcast.mp4 --start 2940 --end 3060
+# analysis: every frame at full resolution, no display
+rso run -c configs/default.yaml -c configs/flight14.yaml --video data/videos/f14_rebroadcast.mp4 \
+  --start 2940 --end 3060 --no-realtime --no-display
+# live demo: half resolution keeps up with 30 fps on a laptop
+rso run -c configs/default.yaml -c configs/flight14.yaml --video data/videos/f14_rebroadcast.mp4 \
+  --start 2940 --end 3060 --set processing.scale=0.5
 ```
 
+- `summary.json` reports `proc_ms` (pipeline only), `loop_ms` (pipeline, overlay and display) and `effective_fps`. In live mode, frames the loop cannot keep up with are dropped, not queued (`frames_dropped`); the tracker uses the true time steps.
 - **Check** with `m`: the ship should turn purple after about 1 s (the panel shows "learning vehicle mask" and no detections until then, and again after every camera cut); the Earth must stay unmasked.
 - Tune on this clip only (keep a different clip for testing): `--set detector.classical.snr_res=7` if clouds produce too many detections; `--set processing.scale=0.75` if it runs below the video frame rate.
 - Send me `runs/<dir>/summary.json`, a few snapshots and the `frames.jsonl` size if you want help tuning.

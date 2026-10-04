@@ -16,7 +16,7 @@ Full numbers and sources: [docs/FEASIBILITY.md](docs/FEASIBILITY.md). The live d
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[train,dev]"
-python -m pytest -q                                   # 68 tests incl. end-to-end synthetic runs (-m "not slow" to skip those)
+python -m pytest -q                                   # 69 tests incl. end-to-end synthetic runs (-m "not slow" to skip those)
 
 rso simulate --out data/sim/seed0 --duration 20       # synthetic clip + truth + catalogue + camera
 rso run -c configs/default.yaml -c data/sim/seed0/mission.yaml --video data/sim/seed0/video.mp4 --mode synthetic
@@ -78,6 +78,7 @@ tests/              unit tests + end-to-end synthetic test
 | `rso extract-clip` | cut a segment with ffmpeg |
 | `rso check-layout` | verify HUD mask, OCR boxes, door position on a frame |
 | `rso ocr` | HUD clock/speed/altitude → CSV and time anchors |
+| `rso shots` | camera cuts over a stretch of video → shot list and contact sheet |
 | `rso fetch-catalog` | CelesTrak / Space-Track element sets → cached OMM JSON |
 | `rso ship` | ship ephemeris table to cross-check the HUD |
 | `rso screen` | catalogued objects that came within range of the ship |

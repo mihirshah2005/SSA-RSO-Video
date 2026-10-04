@@ -34,6 +34,10 @@ data/catalog_cache/
 runs/
 outputs/
 wandb/
+data/sim/
+data/shots/
+/layout_check.png
+/hud_readings*.csv
 
 # Credentials
 .env
