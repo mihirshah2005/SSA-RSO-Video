@@ -28,10 +28,12 @@ mission:
   catalog_file: null                          # set to the OMM JSON from `rso fetch-catalog`
 
 timemap:
-  # The YouTube rebroadcast at t=2986 s showed T+00:49:34 (2974 s). This is an approximate
-  # anchor (the screenshot time is not frame-exact); replace it with `rso ocr` anchors.
+  # From `rso ocr` on the YouTube rebroadcast (3CVoSPIMx6I), video 2040-3900 s: 1,723 clock
+  # ticks give one straight segment, MET = video - 15.9 s (+/- 0.06 s), no replays inside
+  # the deployment window. Outside 2040-3900 s this is an extrapolation: re-run OCR there.
   anchors:
-    - {video_s: 2986.0, met_s: 2974.0, sigma_s: 5.0}
+    - {video_s: 2040.100, met_s: 2024.200, sigma_s: 0.058}
+    - {video_s: 3899.900, met_s: 3884.000, sigma_s: 0.058}
   broadcast_delay_s: 0.0
 
 hud:                                          # normalised [x0, y0, x1, y1] of the 16:9 frame; check with `rso check-layout`
