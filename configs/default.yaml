@@ -63,4 +63,5 @@ overlay:
   panel_width: 420
   font_scale: 0.5
   max_panel_rows: 18
+  display_max_width: 1600
 logging: {out_dir: runs, write_video: true, jsonl: true}

@@ -221,6 +221,7 @@ class OverlayCfg:
     panel_width: int = 420
     font_scale: float = 0.5
     max_panel_rows: int = 18
+    display_max_width: int = 1600  # the live window is shrunk to this width (the saved video is not)
 
 
 @dataclass

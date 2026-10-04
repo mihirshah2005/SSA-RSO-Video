@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import logging
+import queue
+import threading
 import time
 from collections import deque
 from pathlib import Path
@@ -106,9 +108,10 @@ def run(
                                      "catalog_mode": catalog_mode, "fps": meta.fps, "size": [meta.width, meta.height],
                                      "notes": ctx.notes})
     (run_dir / "provenance.json").write_text(json.dumps(prov, indent=2, default=str))
-    writer = None
     writer_path = run_dir / "overlay.mp4"
     frames_log = JsonlWriter(run_dir / "frames.jsonl") if (cfg.logging.jsonl and write_frames_jsonl) else None
+    # video encoding and log writing run on a background thread, so they never delay the display
+    sink = _OutputSink(writer_path if cfg.logging.write_video else None, meta.fps, frames_log)
     ident_log = JsonlWriter(run_dir / "identity_log.jsonl")
 
     paced = PacedReader(source, cfg.realtime.speed, cfg.realtime.drop_policy, cfg.realtime.queue_size) \
@@ -117,12 +120,14 @@ def run(
     lat_recent: deque = deque(maxlen=900)  # rolling window for the on-screen p95
     lat_hist = np.zeros(2001, np.int64)  # 1 ms bins up to 2 s for the run summary (bounded memory)
     proc_hist = np.zeros(2001, np.int64)
+    loop_hist = np.zeros(2001, np.int64)  # whole iteration incl. overlay and display
     n, dropped, lat_p95 = 0, 0, 0.0
     wall0 = time.perf_counter()
     win = "Starship RSO"
     paused = False
     try:
         for idx, t, frame, avail, skipped in it:
+            loop0 = time.perf_counter()
             dropped = paced.dropped if paced is not None else 0
             res = pipe.process(idx, t, frame, avail)
             proc_hist[min(int(res.timings_ms["total"]), 2000)] += 1
@@ -136,18 +141,15 @@ def run(
                 ms = (done - avail) * 1000.0
                 lat_recent.append(ms)
                 lat_hist[min(int(ms), 2000)] += 1
-            if cfg.logging.write_video:
-                if writer is None:
-                    writer = cv2.VideoWriter(str(writer_path), cv2.VideoWriter_fourcc(*"mp4v"), meta.fps,
-                                             (vis.shape[1], vis.shape[0]))
-                writer.write(vis)
-            if frames_log is not None:
-                frames_log.write(_frame_record(res, pipe.scaler))
+            sink.put(vis, _frame_record(res, pipe.scaler) if frames_log is not None else None)
             for rec in pipe.associator.history:
                 ident_log.write(rec)
             pipe.associator.history.clear()
             if display:
-                cv2.imshow(win, vis)
+                dw = cfg.overlay.display_max_width
+                shown = vis if not dw or vis.shape[1] <= dw else cv2.resize(
+                    vis, (dw, int(round(vis.shape[0] * dw / vis.shape[1]))), interpolation=cv2.INTER_AREA)
+                cv2.imshow(win, shown)
                 key = cv2.waitKey(0 if paused else 1) & 0xFF
                 if key in (ord("q"), 27):
                     break
@@ -162,13 +164,13 @@ def run(
                 elif key == ord("s"):
                     cv2.imwrite(str(run_dir / f"snapshot_{idx:06d}.png"), vis)
             n += 1
+            loop_hist[min(int((time.perf_counter() - loop0) * 1000.0), 2000)] += 1
             if max_frames is not None and n >= max_frames:
                 break
     finally:
         if paced is not None:
             dropped = paced.dropped
-        if writer is not None:
-            writer.release()
+        sink.close()
         if frames_log is not None:
             frames_log.close()
         if display:
@@ -179,12 +181,16 @@ def run(
         tracks_log.close()
         ident_log.close()
     events = [e.__dict__ for e in pipe.deploy.events]
+    wall = time.perf_counter() - wall0
     summary = {
         "frames_processed": n,
         "frames_dropped": dropped,
-        "wall_s": time.perf_counter() - wall0,
+        "wall_s": wall,
+        "effective_fps": n / max(wall, 1e-6),
         "proc_ms_p50": _hist_pct(proc_hist, 50),
         "proc_ms_p95": _hist_pct(proc_hist, 95),
+        "loop_ms_p50": _hist_pct(loop_hist, 50),  # pipeline + overlay + display, per processed frame
+        "loop_ms_p95": _hist_pct(loop_hist, 95),
         "latency_ms_p50": _hist_pct(lat_hist, 50),
         "latency_ms_p95": _hist_pct(lat_hist, 95),
         "confirmed_tracks": counts["n"],
@@ -197,6 +203,54 @@ def run(
     (run_dir / "summary.json").write_text(json.dumps(summary, indent=2, default=str))
     log.info("run written to %s", run_dir)
     return run_dir
+
+
+class _OutputSink:
+    """Encodes the overlay video and writes the frame log on one background thread.
+
+    The queue is bounded and ``put`` blocks when it is full, so no logged frame is ever
+    dropped; with a fast enough disk the display loop never waits for the encoder.
+    """
+
+    def __init__(self, video_path: Path | None, fps: float, frames_log, maxsize: int = 32):
+        self.video_path, self.fps, self.frames_log = video_path, fps, frames_log
+        self._writer = None
+        self._error: BaseException | None = None
+        self._q: queue.Queue = queue.Queue(maxsize)
+        self._thread = threading.Thread(target=self._run, name="rso-output", daemon=True)
+        self._thread.start()
+
+    def put(self, vis: np.ndarray, record: dict | None) -> None:
+        if self._error is not None:
+            raise RuntimeError("output writer failed") from self._error
+        self._q.put((vis, record))
+
+    def _run(self) -> None:
+        while True:
+            item = self._q.get()
+            if item is None:
+                break
+            if self._error is not None:
+                continue  # keep draining so put() never blocks forever
+            vis, record = item
+            try:
+                if self.video_path is not None:
+                    if self._writer is None:
+                        self._writer = cv2.VideoWriter(str(self.video_path), cv2.VideoWriter_fourcc(*"mp4v"),
+                                                       self.fps, (vis.shape[1], vis.shape[0]))
+                    self._writer.write(vis)
+                if record is not None and self.frames_log is not None:
+                    self.frames_log.write(record)
+            except BaseException as exc:  # surfaced on the next put() / close()
+                self._error = exc
+
+    def close(self) -> None:
+        self._q.put(None)
+        self._thread.join()
+        if self._writer is not None:
+            self._writer.release()
+        if self._error is not None:
+            raise RuntimeError("output writer failed") from self._error
 
 
 def _hist_pct(hist: np.ndarray, q: float) -> float | None:

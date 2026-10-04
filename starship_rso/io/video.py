@@ -16,6 +16,7 @@ tracker integrates over the real interval.
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import subprocess
 import threading
@@ -77,7 +78,13 @@ class VideoSource:
         self.end_s = end_s
         self.stride = max(1, int(stride))
         if backend == "auto":
-            backend = "pyav" if _have_pyav() and Path(self.path).exists() else "opencv"
+            # RSO_VIDEO_BACKEND=opencv avoids importing PyAV (on macOS the opencv-python and av
+            # wheels each bundle libavdevice, which prints duplicate-class warnings)
+            forced = os.environ.get("RSO_VIDEO_BACKEND", "").strip().lower()
+            if forced in ("pyav", "opencv"):
+                backend = forced
+            else:
+                backend = "pyav" if _have_pyav() and Path(self.path).exists() else "opencv"
         if backend not in ("pyav", "opencv"):
             raise ValueError(f"unknown backend {backend}")
         self.backend = backend
@@ -102,13 +109,13 @@ class VideoSource:
     def __iter__(self) -> Iterator[tuple[int, float, np.ndarray]]:
         gen = self._iter_pyav() if self.backend == "pyav" else self._iter_opencv()
         k = 0
-        for idx, t, frame in gen:
+        for idx, t, get in gen:
             if self.start_s is not None and t < self.start_s - 1e-6:
                 continue
             if self.end_s is not None and t > self.end_s + 1e-6:
                 break
             if k % self.stride == 0:
-                yield idx, t, frame
+                yield idx, t, get()  # pixels are converted only for frames that are used
             k += 1
 
     def _iter_opencv(self) -> Iterator[tuple[int, float, np.ndarray]]:
@@ -127,8 +134,7 @@ class VideoSource:
         msec_ok = True
         try:
             while True:
-                ok, frame = cap.read()
-                if not ok:
+                if not cap.grab():  # decodes; colour conversion happens in retrieve()
                     break
                 # once container timestamps fail, continue from the last good time (never jump back)
                 t = (last_t + 1.0 / fps) if np.isfinite(last_t) else idx / fps
@@ -139,7 +145,7 @@ class VideoSource:
                     elif idx > 0 and np.isfinite(last_t):
                         msec_ok = False  # timestamps unusable for this container/backend
                 last_t = t
-                yield idx, float(t), frame
+                yield idx, float(t), lambda: cap.retrieve()[1]
                 idx += 1
         finally:
             cap.release()
@@ -162,7 +168,7 @@ class VideoSource:
                 t = float((frame.pts - start) * stream.time_base)
                 if idx is None:
                     idx = int(round(t * self.meta.fps))
-                yield idx, t, frame.to_ndarray(format="bgr24")
+                yield idx, t, (lambda f=frame: f.to_ndarray(format="bgr24"))
                 idx += 1
         finally:
             container.close()
