@@ -53,3 +53,26 @@ def test_photometry_scales_with_range():
     assert abs((m1 - m2) - 5.0) < 1e-9
     rows = feasibility_table()
     assert rows[1]["px_30.0m"] > 3.0  # 30 m object at 10 km is a few pixels
+
+
+def test_shot_list_finds_cuts_and_flags_flashes(tmp_path):
+    import cv2
+
+    from starship_rso.config import load_config
+    from starship_rso.io.shots import find_shots, write_shots
+
+    w, h = 320, 180
+    rng = np.random.default_rng(0)
+    earth = cv2.GaussianBlur(rng.integers(0, 255, (h, w, 3)).astype(np.uint8), (0, 0), 4)
+    sky = np.full((h, w, 3), 5, np.uint8)
+    vw = cv2.VideoWriter(str(tmp_path / "v.mp4"), cv2.VideoWriter_fourcc(*"mp4v"), 30, (w, h))
+    for k in range(150):  # earth 2 s, sky 2 s, a 3-frame flash, then earth again
+        vw.write(earth if k < 60 else sky if k < 120 else (np.full((h, w, 3), 250, np.uint8) if k < 123 else earth))
+    vw.release()
+    cfg = load_config(["configs/default.yaml", "configs/flight14.yaml"])
+    shots, thumbs = find_shots(cfg, str(tmp_path / "v.mp4"), every=1)
+    assert [round(s.video_start) for s in shots[:3]] == [0, 2, 4]
+    assert any(s.short for s in shots) and shots[1].mean_level < 10
+    assert shots[0].met_start is not None  # the mission time map applies
+    out = write_shots(shots, thumbs, tmp_path / "shots")
+    assert (out / "shots.csv").exists() and (out / "contact_sheet.jpg").exists()

@@ -122,6 +122,20 @@ def cmd_ocr(args):
         print(f"    - {{video_s: {a.video_s:.3f}, met_s: {a.met_s:.3f}, sigma_s: {a.sigma_s:.3f}}}")
 
 
+def cmd_shots(args):
+    from .io.shots import find_shots, write_shots
+
+    cfg = _cfg(args)
+    shots, thumbs = find_shots(cfg, args.video, args.start, args.end, every=args.every)
+    out = write_shots(shots, thumbs, args.out)
+    long_ = [s for s in shots if not s.short]
+    print(f"{len(shots)} shots ({len(shots) - len(long_)} shorter than 1 s, likely flashes or graphics)")
+    for s in long_:
+        met = f"MET {s.met_start:8.1f} .. {s.met_end:8.1f}" if s.met_start is not None else "MET unknown"
+        print(f"  S{s.shot:02d}  video {s.video_start:8.1f} .. {s.video_end:8.1f}  ({s.duration:6.1f} s)  {met}  level {s.mean_level:5.1f}")
+    print(f"wrote {out / 'shots.csv'} and {out / 'contact_sheet.jpg'}")
+
+
 def cmd_fetch_catalog(args):
     from .orbit.catalog import CelesTrakClient, SpaceTrackClient, write_catalog
 
@@ -512,6 +526,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--every", type=float, default=0.2)
     p.add_argument("--out", default="hud_readings.csv")
     p.set_defaults(fn=cmd_ocr)
+
+    p = sub.add_parser("shots", help="camera cuts over a stretch of video, with a contact sheet")
+    _add_cfg(p)
+    p.add_argument("--video", required=True)
+    p.add_argument("--start", type=float)
+    p.add_argument("--end", type=float)
+    p.add_argument("--every", type=int, default=3, help="analyse every n-th frame")
+    p.add_argument("--out", default="data/shots")
+    p.set_defaults(fn=cmd_shots)
 
     p = sub.add_parser("fetch-catalog", help="download element sets into an OMM JSON file")
     p.add_argument("--source", choices=["celestrak", "spacetrack"], default="celestrak")
