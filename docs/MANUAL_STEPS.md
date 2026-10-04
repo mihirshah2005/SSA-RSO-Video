@@ -10,7 +10,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[train,dev]"          # numpy, opencv, sgp4, torch (MPS on Apple silicon), sklearn, pytest
 brew install ffmpeg yt-dlp tesseract   # video tools and optional HUD OCR
 pip install pytesseract av             # optional: OCR + exact timestamps
-python -m pytest -q                    # 69 tests, about 1 minute; all must pass
+python -m pytest -q                    # 71 tests, about 1 minute; all must pass
 ```
 
 - On macOS, `opencv-python` and `av` each bundle FFmpeg's `libavdevice`, so every command prints two `objc[...] Class AVF... is implemented in both` lines. They concern camera/microphone capture, which this project never uses, so they are harmless here. To silence them, `export RSO_VIDEO_BACKEND=opencv` (PyAV is then never imported; timestamps come from OpenCV, which is exact for constant-frame-rate files like the rebroadcast).
@@ -61,12 +61,12 @@ rso shots -c configs/default.yaml -c configs/flight14.yaml --video data/videos/f
 ## 4. First real run (classical detector)
 
 ```bash
-# analysis: every frame at full resolution, no display
+# S18: particles over the moving Earth (your reference frame); analysis at full resolution
 rso run -c configs/default.yaml -c configs/flight14.yaml --video data/videos/f14_rebroadcast.mp4 \
-  --start 2940 --end 3060 --no-realtime --no-display
-# live demo: half resolution keeps up with 30 fps on a laptop
+  --start 2976 --end 3034 --no-realtime --no-display
+# S19: black sky, stars, dense fast particles; live demo at half resolution
 rso run -c configs/default.yaml -c configs/flight14.yaml --video data/videos/f14_rebroadcast.mp4 \
-  --start 2940 --end 3060 --set processing.scale=0.5
+  --start 3034 --end 3074 --set processing.scale=0.5
 ```
 
 - `summary.json` reports `proc_ms` (pipeline only), `loop_ms` (pipeline, overlay and display) and `effective_fps`. In live mode, frames the loop cannot keep up with are dropped, not queued (`frames_dropped`); the tracker uses the true time steps.

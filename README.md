@@ -16,7 +16,7 @@ Full numbers and sources: [docs/FEASIBILITY.md](docs/FEASIBILITY.md). The live d
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[train,dev]"
-python -m pytest -q                                   # 69 tests incl. end-to-end synthetic runs (-m "not slow" to skip those)
+python -m pytest -q                                   # 71 tests incl. end-to-end synthetic runs (-m "not slow" to skip those)
 
 rso simulate --out data/sim/seed0 --duration 20       # synthetic clip + truth + catalogue + camera
 rso run -c configs/default.yaml -c data/sim/seed0/mission.yaml --video data/sim/seed0/video.mp4 --mode synthetic
@@ -95,19 +95,22 @@ Three 20 s clips (600 frames each), first 1.5 s skipped while the vehicle mask i
 
 | Measure | Earth | Limb | Black sky |
 |---|---|---|---|
-| Detection recall @3 px, catalogued passes | 0.96 | 0.92 | 0.95 |
-| Detection recall @3 px, released payloads | 0.99 | 0.49 | 1.00 |
-| Detection recall @3 px, near-field particles | 0.50 | 0.43 | 0.70 |
-| Tracking MOTA / IDF1 | 0.83 / 0.88 | 0.58 / 0.60 | 0.74 / 0.79 |
+| Detection recall @3 px, catalogued passes | 0.95 | 0.92 | 0.95 |
+| Detection recall @3 px, released payloads | 0.98 | 0.49 | 1.00 |
+| Detection recall @3 px, near-field particles | 0.51 | 0.43 | 0.69 |
+| Detection precision @3 px | 0.89 | 0.77 | 0.21 |
+| Tracking MOTA / IDF1 | 0.88 / 0.90 | 0.62 / 0.67 | 0.74 / 0.79 |
 | Release events (truth: 2) | 2 | 2 | 2 |
 | Accepted catalogue identities (correct / wrong) | 3 / 0 | 3 / 0 | 1 / 0 |
-| Processing time per frame, p50 / p95 | 50 / 77 ms | 49 / 69 ms | 44 / 64 ms |
+| Processing time per frame, p50 / p95 | 56 / 87 ms | 50 / 78 ms | 48 / 72 ms |
 
 - **Identity**: no wrong name was accepted in any clip; the rest stay `candidates` or `unknown` with a stated reason.
 - **Weak spots**: payloads drifting along the bright limb edge (limb clip), flickering particles, and many low-confidence detections on black sky (they rarely become tracks).
 - **Speed**: the live reader drops frames rather than lag; `--set processing.scale=0.75` buys headroom.
 
 These are software-validation numbers on synthetic data, not results on real footage. Real-footage numbers come after the manual steps.
+
+**Real footage, first look:** time map, shot list and what the classical detector does on the Flight 14 rebroadcast are in [docs/FLIGHT14_NOTES.md](docs/FLIGHT14_NOTES.md).
 
 ## Honest-reporting rules built into the code
 
