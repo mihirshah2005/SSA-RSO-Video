@@ -1,0 +1,52 @@
+# Starship Flight 14 (Booster 21 / Ship 41, first orbital flight, Starlink Group 31-1).
+# Facts below come from the research notes in docs/FEASIBILITY.md. Anything marked
+# VERIFY must be checked against primary sources or the video itself before a result
+# depends on it.
+
+mission:
+  name: "Starship Flight 14 (S41)"
+  liftoff_utc: "2026-09-28T12:48:59Z"        # Space.com live coverage; 7:48:59 CDT
+  launch_site: {lat_deg: 25.997, lon_deg: -97.157, alt_km: 0.0}   # Starbase
+  orbit_nominal:
+    perigee_km: 262.0                         # NASASpaceflight: 262 x 277 km
+    apogee_km: 277.0
+    inc_deg: 30.5                             # VERIFY: Wikipedia/McDowell 30.5, NSF 32
+    insertion_met_s: 1520.0                   # T+25:20 orbit insertion burn
+    launch_pass: descending                   # ESE launch azimuth from Starbase
+    downrange_deg_at_seco: null               # angle from the launch site at SECO (T+8:11); null = 14 deg assumption
+    phase_sigma_deg: 5.0                      # ~600 km along track: coarse screening only
+  deployment:                                 # planned timeline (SpaceX via Space.com)
+    first_met_s: 2047.0                       # T+34:07  (Wikipedia variant: T+34:18)
+    last_met_s: 3879.0                        # T+1:04:39 (Wikipedia variant: T+1:04:50)
+    count: 26
+  payload_group:
+    name: "Starlink Group 31-1 (26 x V3)"
+    intdes: null                              # VERIFY: COSPAR id once published
+    norad_range: [100855, 100880]             # CANDIDATE ONLY: 26 objects catalogued 2 Oct 2026, not yet linked to Flight 14
+    name_contains: null
+  ship_ephemeris: nominal                     # nominal | group_centroid | omm:<file>
+  catalog_file: null                          # set to the OMM JSON from `rso fetch-catalog`
+
+timemap:
+  # The YouTube rebroadcast at t=2986 s showed T+00:49:34 (2974 s). This is an approximate
+  # anchor (the screenshot time is not frame-exact); replace it with `rso ocr` anchors.
+  anchors:
+    - {video_s: 2986.0, met_s: 2974.0, sigma_s: 5.0}
+  broadcast_delay_s: 0.0
+
+hud:                                          # normalised [x0, y0, x1, y1] of the 16:9 frame; check with `rso check-layout`
+  clock: [0.425, 0.888, 0.570, 0.942]
+  speed: [0.040, 0.895, 0.115, 0.938]
+  altitude: [0.140, 0.895, 0.188, 0.938]
+
+masks:
+  hud_rects:
+    - [0.0, 0.835, 1.0, 1.0]                  # bottom telemetry band (gauges, clock, compass, globe)
+    - [0.89, 0.03, 0.97, 0.12]                # rebroadcaster logo (top right)
+
+camera:
+  hfov_deg: 90.0                              # ASSUMPTION until `rso calibrate`
+  calibration_file: null
+
+deployment:
+  door_xy: null                               # normalised payload-door position for the deployment camera view

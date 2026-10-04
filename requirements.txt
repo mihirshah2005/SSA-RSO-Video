@@ -1,0 +1,14 @@
+# Core runtime (live demo, classical pipeline, orbit engine)
+numpy>=1.24
+scipy>=1.10
+opencv-python>=4.8
+pyyaml>=6.0
+sgp4>=2.22
+requests>=2.28
+
+# Optional, install as needed:
+#   pip install torch scikit-learn          # learned detector + GBM classifier
+#   pip install pytesseract                 # HUD OCR (also needs the tesseract binary)
+#   pip install av                          # exact presentation timestamps via PyAV
+#   pip install spacetrack                  # Space-Track GP history client
+#   pip install pytest astropy              # tests and frame cross-checks

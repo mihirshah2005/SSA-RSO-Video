@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "starship-rso"
+version = "0.1.0"
+description = "Real-time detection, tracking, classification and catalogue association of small objects in Starship onboard video"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Mihir Sunil Shah" }]
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "opencv-python>=4.8",
+    "pyyaml>=6.0",
+    "sgp4>=2.22",
+    "requests>=2.28",
+]
+
+[project.optional-dependencies]
+train = ["torch>=2.5", "scikit-learn>=1.3"]
+ocr = ["pytesseract>=0.3.10"]
+av = ["av>=11"]
+spacetrack = ["spacetrack>=1.3"]
+dev = ["pytest>=7", "astropy>=5.3", "scikit-learn>=1.3"]
+
+[project.scripts]
+rso = "starship_rso.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["starship_rso*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = [
+    "slow: end-to-end tests that render synthetic video (deselect with -m 'not slow')",
+]

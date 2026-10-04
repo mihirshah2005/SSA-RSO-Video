@@ -1,0 +1,27 @@
+# Temporal heatmap detector training (see starship_rso/train/train_heatmap.py).
+# Run a pilot first to measure speed and memory on the GPU you were given:
+#   python -m starship_rso.train.train_heatmap --config configs/train_heatmap.yaml --pilot
+stores:                       # frame stores from `rso make-dataset` (real clips + optional synthetic)
+  - data/datasets/f14_clipA
+  - data/datasets/sim_seed0
+out_dir: runs/heatmap_k3
+frames: 3                     # 1 = single-frame baseline; compare 1 vs 3 vs 5
+base: 32
+depth: 4
+crop: 512
+batch_size: 8
+lr: 3.0e-4
+weight_decay: 1.0e-4
+epochs: 40
+samples_per_epoch: 4000
+val_samples: 400
+workers: 4
+amp: true
+seed: 0
+offset_weight: 1.0
+patience: 8
+threshold: 0.35
+tol_px: 3.0
+inject_rate: 0.5
+positive_frac: 0.6
+device: auto

@@ -1,0 +1,66 @@
+# Default pipeline configuration. Every key is documented in starship_rso/config.py.
+# Mission-specific settings (launch time, orbit, HUD layout, time anchors) live in
+# configs/flight14.yaml; combine with:  rso run -c configs/default.yaml -c configs/flight14.yaml ...
+# Override anything on the command line:  --set detector.classical.snr_res=7
+processing: {scale: 1.0}
+realtime: {enabled: true, speed: 1.0, drop_policy: latest, queue_size: 4}
+masks:
+  hud_rects: []
+  border_px: 4
+  static: {enabled: true, tau_s: 8.0, std_thresh: 3.0, bright_thresh: 40.0, grad_thresh: 10.0,
+    min_area_px: 1500, dilate_px: 5, warmup_s: 1.0, update_every: 5}
+registration: {work_width: 960, max_corners: 600, quality: 0.01, min_distance: 12,
+  lk_win: 21, lk_levels: 3, fb_thresh_px: 1.0, ransac_thresh_px: 1.5, min_inliers: 25,
+  model: homography, full_model_min_inliers: 150, full_model_min_spread: 0.3, affine_min_inliers: 60,
+  affine_min_spread: 0.15, static_px: 0.4}
+scenecut: {work_width: 320, hist_corr_thresh: 0.55, mean_abs_thresh: 40.0}
+detector:
+  type: classical
+  classical:
+    polarity: bright
+    scales:
+    - {radius: 3, downsample: 1}
+    - {radius: 4, downsample: 4}
+    - {radius: 4, downsample: 8}
+    snr_clean: 6.0
+    snr_app: 5.0
+    snr_res: 6.0
+    low_factor: 0.6
+    noise_every: 3
+    clutter_window: 97
+    clutter_thresh: 1.0
+    history: [2, 5]
+    coarse_history: [8, 16]
+    residual_dilate: 3
+    nms_radius: 4
+    max_detections: 400
+    centroid_halfwin: 4
+    noise_block: 64
+  heatmap: {weights: null, frames: 3, threshold: 0.35, low_threshold: 0.15, tile: 0,
+    device: auto, half: true}
+  fuse_radius: 3.0
+tracker: {q_accel: 2000.0, init_vel_sigma: 400.0, meas_sigma_floor: 0.7, gate_chi2: 16.0,
+  max_gate_px: 120.0, confirm_hits: 4, confirm_window: 6, max_tentative_misses: 2,
+  max_coast_s: 0.5, high_conf: 0.5, history_len: 900, min_dt: 0.001}
+classify: {min_obs: 6, static_speed_px_s: 3.0, bg_rel_speed_px_s: 4.0, defocus_sigma_px: 3.5,
+  fast_rel_speed_px_s: 150.0, flicker_cv: 0.45, payload_max_speed_px_s: 80.0, payload_max_curv_px: 2.0,
+  payload_door_radius: 0.15, margin: 0.15, model_path: null}
+deployment: {door_xy: null, min_track_s: 1.0, min_payload_passes: 3}
+identify: {slow_loop_hz: 2.0, p_unknown_prior: 0.5, accept_posterior: 0.95, accept_chi2: 13.3,
+  min_track_obs: 15, attitude_sigma_deg: 1.0, ephem_sigma_km: 2.0, rate_sigma_deg_s: 0.05,
+  time_sigma_s: 0.5, max_rate_deg_s: 20.0, release_time_sigma_s: 10.0, object_size_m: 10.0,
+  max_range_km: 2000.0, max_bias_sigma_deg: 2.0, max_rate_sigma_deg_s: 0.3, max_chance_matches: 0.01,
+  psf_sigma_px: 1.2}
+camera: {hfov_deg: 90.0, k1: 0.0, k2: 0.0, cx: null, cy: null, attitude_ypr_deg: null,
+  calibration_file: null}
+overlay:
+  trail_len: 40
+  show_tentative: false
+  min_track_s: 0.3
+  label_min_s: 1.0
+  show_categories: [unknown, near_field_particle, payload_candidate, background_feature,
+    vehicle_feature, artifact]
+  panel_width: 420
+  font_scale: 0.5
+  max_panel_rows: 18
+logging: {out_dir: runs, write_video: true, jsonl: true}

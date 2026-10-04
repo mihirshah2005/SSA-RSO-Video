@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# OS / editors
+.DS_Store
+.vscode/
+.idea/
+
+# Large or regenerable data (keep manifests, not media)
+data/videos/
+data/frames/
+data/datasets/
+data/catalog_cache/
+*.mp4
+*.mkv
+*.webm
+*.mov
+*.npy
+*.npz
+*.pt
+*.pth
+*.onnx
+
+# Run outputs
+runs/
+outputs/
+wandb/
+
+# Credentials
+.env
+spacetrack_credentials*
