@@ -110,6 +110,8 @@ class ClassicalCfg:
     max_detections: int = 400
     centroid_halfwin: int = 4
     noise_block: int = 64  # block size for the robust noise map
+    residual_block: int = 96  # block size for the local motion-residual noise map
+    min_residual_frac: float = 0.5  # residual must be at least this fraction of the object's contrast
 
 
 @dataclass
@@ -151,6 +153,7 @@ class TrackerCfg:
 class ClassifyCfg:
     min_obs: int = 6
     static_speed_px_s: float = 3.0  # |v| below this relative to the camera -> vehicle-fixed
+    vehicle_near_norm: float = 0.03  # a fixed point counts as a vehicle feature within this distance of the ship (x width)
     bg_rel_speed_px_s: float = 4.0  # |v - v_bg| below this -> moves with the Earth
     defocus_sigma_px: float = 3.5  # PSF sigma above this suggests a near-field (defocused) object
     fast_rel_speed_px_s: float = 150.0  # relative speed above this suggests near-field

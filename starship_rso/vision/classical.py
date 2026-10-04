@@ -472,11 +472,18 @@ class ClassicalDetector:
         if levels:
             res, avail = self._residual_at(im, levels, xs, ys, pol)
             skey = (pol, ds)
-            if recompute or skey not in self._sigma_res:
-                self._sigma_res[skey] = self._residual_stats(im, levels, all_peaks, pol)
-            rmed, rsig = self._sigma_res[skey]
+            st = self._sigma_res.get(skey)
+            if recompute or st is None or (not np.isscalar(st[0]) and st[0].shape != im.shape):
+                st = self._sigma_res[skey] = self._residual_stats(im, levels, all_peaks, pol, ds)
+            rmed, rsig = st
+            if not np.isscalar(rmed):
+                rmed, rsig = rmed[ys, xs], rsig[ys, xs]
             rr = np.where(avail, (res - rmed) / rsig, 0.0)
-            u_motion = np.minimum(sa / c.snr_app, rr / c.snr_res)
+            # fraction of the object's own contrast that is new at this background location: about 1
+            # for anything that moved there, small for a cloud puff whose brightness merely flickers
+            # (heavy video compression) or that is slightly misregistered
+            frac = res / np.maximum(tophat[ys, xs].astype(np.float64), 1e-3)
+            u_motion = np.minimum.reduce([sa / c.snr_app, rr / c.snr_res, frac / max(c.min_residual_frac, 1e-3)])
             u = np.maximum(u, np.where(avail, u_motion, 0.0))
         keep = u >= c.low_factor
         if not keep.any():
@@ -516,23 +523,26 @@ class ClassicalDetector:
             )
         return out
 
-    def _residual_stats(self, im, levels, peaks, pol, n: int = 5000) -> tuple[float, float]:
-        """Robust location/scale of the residual at (a sample of) all appearance peaks.
+    def _residual_stats(self, im, levels, peaks, pol, ds: int = 1, n: int = 20000):
+        """Robust location/scale *maps* of the residual at (a sample of) all appearance peaks.
 
         Most peaks are background texture moving with the Earth, so this measures
         the residual left by misregistration, compression and noise exactly where
-        candidates are evaluated.
+        candidates are evaluated. It is local (blocks of ``residual_block`` px):
+        heavily compressed, high-contrast clouds leave far larger residuals than
+        open ocean or black sky, and one global scale either floods the clouds
+        with detections or blinds the quiet areas. Blocks with too few peaks use
+        the global value.
         """
         ys, xs = peaks
         if len(ys) == 0:
             return 0.0, 1.0
         idx = self._rng.choice(len(ys), size=min(n, len(ys)), replace=False)
         res, avail = self._residual_at(im, levels, xs[idx], ys[idx], pol)
-        r = res[avail]
-        if r.size < 10:
+        if avail.sum() < 10:
             return 0.0, 1.0
-        med = float(np.median(r))
-        return med, robust_sigma(r, floor=0.5)
+        block = max(16, int(self.cfg.residual_block) // max(1, ds))
+        return peak_stats_map(res[avail], ys[idx][avail], xs[idx][avail], im.shape, block, floor=0.5)
 
     # ---------------------------------------------------------------- merge
     def _merge_radius(self, d: Detection) -> float:

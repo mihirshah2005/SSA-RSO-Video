@@ -36,15 +36,17 @@ detector:
     max_detections: 400
     centroid_halfwin: 4
     noise_block: 64
+    residual_block: 96
+    min_residual_frac: 0.5
   heatmap: {weights: null, frames: 3, threshold: 0.35, low_threshold: 0.15, tile: 0,
     device: auto, half: true}
   fuse_radius: 3.0
 tracker: {q_accel: 2000.0, init_vel_sigma: 400.0, meas_sigma_floor: 0.7, gate_chi2: 16.0,
   max_gate_px: 120.0, confirm_hits: 4, confirm_window: 6, max_tentative_misses: 2,
   max_coast_s: 0.5, high_conf: 0.5, history_len: 900, min_dt: 0.001}
-classify: {min_obs: 6, static_speed_px_s: 3.0, bg_rel_speed_px_s: 4.0, defocus_sigma_px: 3.5,
-  fast_rel_speed_px_s: 150.0, flicker_cv: 0.45, payload_max_speed_px_s: 80.0, payload_max_curv_px: 2.0,
-  payload_door_radius: 0.15, margin: 0.15, model_path: null}
+classify: {min_obs: 6, static_speed_px_s: 3.0, vehicle_near_norm: 0.03, bg_rel_speed_px_s: 4.0,
+  defocus_sigma_px: 3.5, fast_rel_speed_px_s: 150.0, flicker_cv: 0.45, payload_max_speed_px_s: 80.0,
+  payload_max_curv_px: 2.0, payload_door_radius: 0.15, margin: 0.15, model_path: null}
 deployment: {door_xy: null, min_track_s: 1.0, min_payload_passes: 3}
 identify: {slow_loop_hz: 2.0, p_unknown_prior: 0.5, accept_posterior: 0.95, accept_chi2: 13.3,
   min_track_obs: 15, attitude_sigma_deg: 1.0, ephem_sigma_km: 2.0, rate_sigma_deg_s: 0.05,
