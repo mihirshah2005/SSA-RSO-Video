@@ -36,6 +36,7 @@ FEATURE_NAMES = [
     "first_y_norm",
     "first_sigma",
     "door_dist_norm",
+    "veh_dist_norm",
     "met_first",
     "fill_frac",
 ]
@@ -107,6 +108,7 @@ def track_features(
     window: int = 90,
     first: TrackPoint | None = None,
     n_obs: int | None = None,
+    vehicle_dist: np.ndarray | None = None,
 ) -> dict[str, float]:
     """Compute features from the most recent ``window`` observed points of a track.
 
@@ -169,6 +171,13 @@ def track_features(
     else:
         f["door_dist_norm"] = -1.0
     f["met_first"] = float(first.met) if first.met is not None else float("nan")
+    # distance (normalised by the image width) from the ship's masked structure; 1.0 = unknown/far
+    f["veh_dist_norm"] = 1.0
+    if vehicle_dist is not None:
+        hh, ww = vehicle_dist.shape
+        xs = np.clip(np.rint(x[-15:] * ww / max(width, 1)).astype(int), 0, ww - 1)
+        ys = np.clip(np.rint(y[-15:] * hh / max(height, 1)).astype(int), 0, hh - 1)
+        f["veh_dist_norm"] = float(np.median(vehicle_dist[ys, xs]) / max(ww, 1))
     return f
 
 

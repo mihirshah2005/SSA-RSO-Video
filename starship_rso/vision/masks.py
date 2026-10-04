@@ -153,14 +153,20 @@ class StaticStructureMask:
         m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
         n, lab, stats, _ = cv2.connectedComponentsWithStats(m, connectivity=8)
         min_area_small = c.min_area_px / float(self.ds * self.ds)
+        hs, ws = m.shape
+        x0, y0 = stats[:, cv2.CC_STAT_LEFT], stats[:, cv2.CC_STAT_TOP]
+        x1, y1 = x0 + stats[:, cv2.CC_STAT_WIDTH], y0 + stats[:, cv2.CC_STAT_HEIGHT]
+        at_border = (x0 <= 1) | (y0 <= 1) | (x1 >= ws - 1) | (y1 >= hs - 1)
+        big = stats[:, cv2.CC_STAT_AREA] >= 0.03 * hs * ws  # a bright source's lens glow can cover ~2%
         keep = np.zeros(n, bool)
-        keep[1:] = stats[1:, cv2.CC_STAT_AREA] >= min_area_small
+        # The camera sits on the ship, so ship structure reaches the image edge or is large. A small
+        # steady blob in the open sky is a star, a planet or a co-moving satellite: never mask it.
+        keep[1:] = (stats[1:, cv2.CC_STAT_AREA] >= min_area_small) & (at_border[1:] | big[1:])
         m = keep[lab].astype(np.uint8)
         # fill small holes: smooth patches enclosed by vehicle structure belong to the vehicle.
         # Large enclosed regions (Earth seen between a flap and the body) stay valid.
         inv = 1 - m
         n2, lab2, stats2, _ = cv2.connectedComponentsWithStats(inv, connectivity=4)
-        hs, ws = m.shape
         max_hole = 0.02 * hs * ws
         fill = np.zeros(n2, bool)
         for k in range(1, n2):

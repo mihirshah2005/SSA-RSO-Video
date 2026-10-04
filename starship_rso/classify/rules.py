@@ -41,11 +41,14 @@ def classify_rules(f: dict[str, float], cfg: ClassifyCfg, mission: MissionCfg | 
     dur_ok = _ramp(f["duration_s"], 0.2, 1.0)
     speed, rel = f["speed_px_s"], f["rel_speed_px_s"]
 
-    # Fixed relative to the camera: glints, tile edges, antennas.
+    # Fixed relative to the camera: glints, tile edges, antennas, i.e. on or next to the ship. A point
+    # fixed in the image out in the open sky may instead be a co-moving satellite, a star or a planet,
+    # so it stays "unknown" and remains eligible for catalogue association.
     static = _ramp(speed, 2 * cfg.static_speed_px_s, cfg.static_speed_px_s)
-    s[Category.VEHICLE_FEATURE.value] = static * dur_ok
+    near_ship = _ramp(f.get("veh_dist_norm", 0.0), 2 * cfg.vehicle_near_norm, cfg.vehicle_near_norm)
+    s[Category.VEHICLE_FEATURE.value] = static * dur_ok * near_ship
     if static > 0.5:
-        reasons.append(f"fixed in image ({speed:.1f} px/s)")
+        reasons.append(f"fixed in image ({speed:.1f} px/s)" + ("" if near_ship > 0.5 else ", away from the ship"))
 
     # Moving with the Earth: cloud puffs, sun glint on water.
     if f["has_bg"] > 0 and f["bg_speed_px_s"] > 2 * cfg.bg_rel_speed_px_s:

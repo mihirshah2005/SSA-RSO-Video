@@ -171,3 +171,47 @@ def test_frames_stored_during_mask_warmup_get_the_learned_vehicle_mask():
             band.append(sum(1 for x in d if 150 <= x.y < 200 and x.score >= 0.6))
         hist.push(g, valid)
     assert sum(band) == 0, band
+
+
+# ---------------------------------------------------------------- first real-footage run
+def test_flickering_cloud_puffs_are_not_detections_but_movers_are(rng):
+    """Heavy compression makes small cumulus puffs flicker frame to frame; the residual must be a
+    large fraction of the object's own contrast, which only something that moved there achieves."""
+    import cv2
+
+    h, w = 270, 480
+    base = np.full((h + 60, w + 60), 70.0, np.float32)
+    puffs = rng.uniform([30, 30], [w + 30, h + 30], (40, 2))
+    for x, y in puffs:
+        _spot(base, x, y, 80.0, 1.6)
+    det = ClassicalDetector(ClassicalCfg(), (h, w))
+    hist = History(16)
+    H = np.array([[1, 0, -1.0], [0, 1, 0], [0, 0, 1.0]])  # Earth moves 1 px/frame left
+    out = []
+    for k in range(12):
+        f = base[0:h, k : k + w].copy()
+        f = f * (1.0 + 0.15 * np.sin(1.7 * k + np.arange(w)[None, :] / 37.0)).astype(np.float32) * (f > 75) + f * (f <= 75)
+        f += rng.normal(0, 1.0, f.shape).astype(np.float32)
+        _spot(f, 100 + 6 * k, 200 - 3 * k, 90.0, 1.2)  # a particle crossing the clouds
+        hist.advance(Registration(H, k > 0))
+        out = det.detect(f, hist.items(), np.ones((h, w), bool), k, k / 30)
+        hist.push(f, np.ones((h, w), bool))
+    hi = [d for d in out if d.confidence >= 0.5]
+    assert any(np.hypot(d.x - 166, d.y - 167) < 2 for d in hi), "mover lost"
+    assert len(hi) <= 3, [(round(d.x), round(d.y)) for d in hi]
+
+
+def test_small_steady_blob_in_open_sky_is_not_masked_as_ship():
+    """A planet, star or co-moving satellite is steady on black sky, like the ship; only structure
+    that reaches the image edge (or is large) is the ship."""
+    from starship_rso.vision.masks import StaticStructureMask
+
+    h, w = 240, 320
+    rng = np.random.default_rng(0)
+    m = StaticStructureMask(StaticMaskCfg(warmup_s=0.5, update_every=1), (h, w))
+    for k in range(40):
+        g = np.full((h, w), 4.0, np.float32) + rng.normal(0, 1.0, (h, w)).astype(np.float32)
+        g[180:, :] = 120.0  # ship panel along the bottom edge
+        _spot(g, 160.0, 60.0, 150.0, 4.0)  # steady bright point with a glow
+        m.update(g, k / 30, np.eye(3), False, static_background=True)
+    assert m.mask[200, 160] and not m.mask[60, 160]

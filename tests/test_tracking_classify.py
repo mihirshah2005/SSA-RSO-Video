@@ -58,7 +58,7 @@ def test_camera_cut_kills_tracks():
     assert all(t.state == TrackState.DEAD for t in tr.finished)
 
 
-def _features_for(path_fn, flux_fn, sigma, n=60, bg=(0.0, 60.0)):
+def _features_for(path_fn, flux_fn, sigma, n=60, bg=(0.0, 60.0), vehicle_dist=None):
     tr = Tracker(TrackerCfg())
     for k in range(n):
         t = k / 30
@@ -66,15 +66,20 @@ def _features_for(path_fn, flux_fn, sigma, n=60, bg=(0.0, 60.0)):
         tr.update([_det(x, y, sigma=sigma, flux=flux_fn(t))], FrameInfo(k, t, 960, 540, met=2100 + t),
                   bg_flow=lambda *_: bg)
     track = tr.live_tracks(True)[0]
-    return track_features(track.history, 960, 540, door_xy=[0.6, 0.4])
+    return track_features(track.history, 960, 540, door_xy=[0.6, 0.4], vehicle_dist=vehicle_dist)
 
 
 def test_rules_separate_particle_vehicle_and_payload():
     cfg = ClassifyCfg()
     particle = _features_for(lambda t: (500 - 250 * t, 200 + 80 * t * t), lambda t: 100 * (1 + 0.8 * np.sin(20 * t)), 6.0)
     assert classify_rules(particle, cfg).category == Category.NEAR_FIELD_PARTICLE
-    glint = _features_for(lambda t: (700.0, 300.0), lambda t: 80.0, 1.2)
+    ship = np.full((135, 240), 400.0, np.float32)  # 1/4-res distance map: ship structure around (700, 300)
+    ship[60:90, 160:190] = 0.0
+    glint = _features_for(lambda t: (700.0, 300.0), lambda t: 80.0, 1.2, vehicle_dist=ship)
     assert classify_rules(glint, cfg).category == Category.VEHICLE_FEATURE
+    # the same fixed point far from any ship structure: a co-moving satellite, star or planet
+    sky = _features_for(lambda t: (100.0, 100.0), lambda t: 80.0, 1.2, vehicle_dist=ship)
+    assert classify_rules(sky, cfg).category == Category.UNKNOWN
     payload = _features_for(lambda t: (576 - 20 * t, 216 - 5 * t), lambda t: 400 * np.exp(-0.4 * t), 4.0, n=120)
     assert classify_rules(payload, cfg).category == Category.PAYLOAD
     cloud = _features_for(lambda t: (300.0, 100 + 60 * t), lambda t: 50.0, 1.5)

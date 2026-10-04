@@ -22,6 +22,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 
+import cv2
 import numpy as np
 
 from ..classify.deployment import DeploymentMonitor
@@ -186,12 +187,22 @@ class Pipeline:
         return FrameResult(info, dets, list(tracks), reg, valid, tm, slow, warming)
 
     # ------------------------------------------------------------- classify
+    def _vehicle_distance(self) -> np.ndarray | None:
+        """Distance (processing px, at 1/4 resolution) to the masked ship structure, or None."""
+        vm = self.masks.static.mask
+        if not self.masks.ready or not vm.any():
+            return None
+        small = cv2.resize(vm.astype(np.uint8), (max(1, self.w // 4), max(1, self.h // 4)), interpolation=cv2.INTER_NEAREST)
+        return cv2.distanceTransform((small == 0).astype(np.uint8), cv2.DIST_L2, 3) * 4.0
+
     def _classify(self, tracks, info: FrameInfo) -> None:
         door = self.cfg.deployment.door_xy
+        vdist = self._vehicle_distance()
         for tr in tracks:
             if not tr.is_confirmed:
                 continue
-            f = track_features(tr.history, self.w, self.h, door, first=tr.first, n_obs=tr.n_obs)
+            f = track_features(tr.history, self.w, self.h, door, first=tr.first, n_obs=tr.n_obs,
+                               vehicle_dist=vdist)
             tr.features = f
             if self.model is not None:
                 dec = self.model.predict(f)
