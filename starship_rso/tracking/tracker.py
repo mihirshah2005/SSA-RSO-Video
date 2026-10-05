@@ -61,6 +61,7 @@ class Track:
     first: TrackPoint | None = None  # first observation, kept even when history is trimmed
     n_obs: int = 0
     payload_streak: int = 0  # consecutive classification passes that returned "payload"
+    classified_at_obs: int = -1  # n_obs when the category was last computed
 
     @property
     def label(self) -> str:

@@ -76,6 +76,7 @@ class Pipeline:
         self.model = TrackCategoryModel.load(cfg.classify.model_path) if cfg.classify.model_path else None
         self.associator = CatalogAssociator(cfg.identify, ctx.camera_native, ctx.cache, self.scaler)
         self.classify_every = max(1, classify_every)
+        self.reclassify_obs = 10
         self._prev_u8: np.ndarray | None = None
         self._prev_t: float | None = None
         self._last_slow_t = -np.inf
@@ -201,6 +202,11 @@ class Pipeline:
         for tr in tracks:
             if not tr.is_confirmed:
                 continue
+            # features change slowly: recompute only for new tracks or after enough new observations
+            # (with hundreds of particles in view, classifying every track every pass dominated the cost)
+            if tr.classified_at_obs >= 0 and tr.n_obs - tr.classified_at_obs < self.reclassify_obs:
+                continue
+            tr.classified_at_obs = tr.n_obs
             f = track_features(tr.history, self.w, self.h, door, first=tr.first, n_obs=tr.n_obs,
                                vehicle_dist=vdist)
             tr.features = f
@@ -211,9 +217,10 @@ class Pipeline:
             tr.category = dec
             tr.payload_streak = tr.payload_streak + 1 if dec.category == Category.PAYLOAD else 0
             # a release event is logged once and never retracted, so it needs a stable decision
-            if (tr.payload_streak >= self.cfg.deployment.min_payload_passes
+            # a release event needs a known door: without one, "payload" is only a category
+            if (door is not None and tr.payload_streak >= self.cfg.deployment.min_payload_passes
                     and f["duration_s"] >= self.cfg.deployment.min_track_s):
-                door_ok = door is None or (0 <= f["door_dist_norm"] <= self.cfg.classify.payload_door_radius)
+                door_ok = 0 <= f["door_dist_norm"] <= self.cfg.classify.payload_door_radius
                 if door_ok and tr.first is not None:
                     first = tr.first
                     tsig = first.time_sigma if first.time_sigma is not None else 1.0

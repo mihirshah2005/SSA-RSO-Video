@@ -84,15 +84,17 @@ def _mask_of(item) -> np.ndarray | None:
 
 
 def _row_median(a: np.ndarray) -> np.ndarray:
-    """Median of each row ignoring NaN (0 for an all-NaN row); fast when no NaN is present."""
+    """Median of each row ignoring NaN (0 for an all-NaN row), fully vectorised."""
     nan = np.isnan(a)
     if not nan.any():
         return np.median(a, axis=1)
-    out = np.median(np.where(nan, 0.0, a), axis=1)
-    for i in np.nonzero(nan.any(axis=1))[0]:  # only windows that reach past the image edge
-        row = a[i][~nan[i]]
-        out[i] = float(np.median(row)) if row.size else 0.0
-    return out
+    srt = np.sort(a, axis=1)  # NaN sort to the end of each row
+    cnt = (~nan).sum(axis=1)
+    lo = np.clip((cnt - 1) // 2, 0, a.shape[1] - 1)
+    hi = np.clip(cnt // 2, 0, a.shape[1] - 1)
+    rows = np.arange(a.shape[0])
+    med = 0.5 * (srt[rows, lo] + srt[rows, hi])
+    return np.where(cnt > 0, med, 0.0)
 
 
 def _measure_group(gray: np.ndarray, cx: np.ndarray, cy: np.ndarray, pol: np.ndarray, hw: int,
@@ -190,7 +192,7 @@ def estimate_noise(gray: np.ndarray, rng: np.random.Generator, n: int = 4000) ->
     return max(robust_sigma(lap, floor=0.3) / np.sqrt(1.25), 0.3)
 
 
-def remeasure(gray: np.ndarray, dets: list[Detection], noise: float, iters: int = 6) -> list[Detection]:
+def remeasure(gray: np.ndarray, dets: list[Detection], noise: float, iters: int = 4) -> list[Detection]:
     """Centroid, size and flux of detections on the full-resolution image.
 
     Uses :func:`_measure_group`. This makes size and flux comparable whichever
@@ -218,8 +220,9 @@ def remeasure(gray: np.ndarray, dets: list[Detection], noise: float, iters: int 
     res = {k: np.zeros(len(dets)) for k in ("ellipticity", "flux", "peak", "area")}
     done = np.zeros(len(dets), bool)  # measured at least once
     active = np.ones(len(dets), bool)
+    hws = half_width(sig)
     for _ in range(iters):
-        hws = half_width(sig)
+        hws = np.maximum(hws, half_width(sig))
         for hw in np.unique(hws[active]):
             idx = np.nonzero(active & (hws == hw))[0]
             m = _measure_group(gray, x[idx], y[idx], pol[idx], int(hw), noise)
@@ -230,9 +233,10 @@ def remeasure(gray: np.ndarray, dets: list[Detection], noise: float, iters: int 
             for key in res:
                 res[key][g] = m[key][good]
             done[g] = True
-            # converged: the window no longer moves and already matches the measured size
+            # converged: the window no longer moves and is already large enough (windows only grow,
+            # so a size near a bin boundary cannot oscillate between two windows)
             active[idx[~good]] = False
-            active[g] = (moved >= 0.3) | (half_width(sig[g]) != hw)
+            active[g] = (moved >= 0.5) | (half_width(sig[g]) > hw)
         if not active.any():
             break
     out = []
