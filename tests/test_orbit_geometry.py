@@ -177,3 +177,33 @@ def test_make_omm_fields_round_trip():
     r, _, ok = Propagator([rec]).states([rec.epoch_utc])
     assert ok.all() and 6500 < np.linalg.norm(r) < 6800
     assert KeplerOrbit(rec.epoch_utc, 6700, 0.001, 0.5, 0, 0, 0).period_s > 5000
+
+
+@pytest.mark.slow
+def test_ship_orbit_recovered_from_quantised_hud_telemetry():
+    """Altitude (1 km steps) and ground speed (1 km/h steps) pin down the in-plane orbit, and the
+    launch prior picks the right one of the two phase branches half an orbit apart."""
+    from starship_rso.orbit.fit_ship import HudSeries, _state, fit_ship, predict_hud, propagate_j2
+    from starship_rso.orbit.kepler import KeplerOrbit
+
+    L = 1.79e9
+    inc, raan = np.deg2rad(30.5), np.deg2rad(339.0)
+    truth = np.array([6378.137 + 272.0, 0.0011, -0.0004, np.deg2rad(290.0)])
+    met = np.arange(2040.0, 3900.0, 4.0)
+    t0 = L + 2970.0
+    r0, v0 = _state(truth, inc, raan)
+    r, v = propagate_j2(r0, v0, t0, L + met)
+    alt, spd = predict_hud(r, v, L + met, "geodetic")
+    rng = np.random.default_rng(3)  # display rounding of values that drift within each sampling bin
+    series = HudSeries(met, np.round(alt + rng.uniform(-0.3, 0.3, alt.size)), np.round(spd + rng.uniform(-0.3, 0.3, spd.size)))
+    prior = KeplerOrbit(t0, truth[0], 0.001, inc, raan, 0.0, truth[3] + np.deg2rad(3.0))  # phase off by 3 deg
+
+    class Prior:
+        def state(self, utc):
+            return prior.state(utc)
+
+    fit = fit_ship(series, L, inc, raan, "test", epoch_met=2970.0, prior=Prior())
+    assert fit.alt_mode == "geodetic"
+    du = (fit.u_deg - 290.0 + 180.0) % 360.0 - 180.0
+    assert abs(du) < 3.0 * fit.u_sigma_deg and fit.u_sigma_deg < 0.5, (fit.u_deg, fit.u_sigma_deg)
+    assert abs(fit.perigee_km - (272.0 * 1.0)) < 15.0 and fit.rms_alt_km < 0.4

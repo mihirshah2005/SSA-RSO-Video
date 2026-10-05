@@ -102,6 +102,18 @@ def to_satrec(rec: OMMRecord) -> Satrec:
     return sat
 
 
+def load_catalog(spec, source: str | None = None) -> list[OMMRecord]:
+    """One OMM JSON path, or a list of them (e.g. the whole-catalogue window plus a later
+    payload-group history), concatenated."""
+    if spec is None:
+        return []
+    paths = [spec] if isinstance(spec, (str, Path)) else list(spec)
+    out: list[OMMRecord] = []
+    for p in paths:
+        out += load_omm_json(p, source)
+    return out
+
+
 def load_omm_json(path: str | Path, source: str | None = None) -> list[OMMRecord]:
     with open(path, encoding="utf-8") as fh:
         data = json.load(fh)

@@ -17,7 +17,7 @@ from ..geometry.camera import PinholeCamera, camera_from_config
 from ..identify.predictions import PredictionCache
 from ..io.timemap import TimeMap, parse_utc
 from ..orbit.catalog import best_record_per_object, select_records
-from ..orbit.omm import OMMRecord, load_omm_json
+from ..orbit.omm import OMMRecord, load_catalog, load_omm_json
 from ..orbit.release import ReleaseEstimate, estimate_release_times
 from ..orbit.ship import GroupCentroidEphemeris, NominalShipEphemeris, SGP4ShipEphemeris, ShipEphemeris
 
@@ -58,7 +58,7 @@ def build_context(
 
     path = catalog_path or m.catalog_file
     if path:
-        ctx.records = load_omm_json(path)
+        ctx.records = load_catalog(path)
         ctx.notes.append(f"catalogue: {len(ctx.records)} element sets from {path}")
     liftoff = parse_utc(m.liftoff_utc) if m.liftoff_utc else None
     u0, _ = tm.utc(clip_t0)
@@ -83,7 +83,7 @@ def build_context(
                                           note="retrospective" if catalog_mode == "retrospective" else "as-of")
         ctx.notes.append(f"ship ephemeris: {ctx.ship.description} (~{ctx.ship.position_sigma_km:.1f} km 1-sigma)")
     if ctx.group and liftoff is not None and m.deployment.first_met_s is not None:
-        if isinstance(ctx.ship, SGP4ShipEphemeris):
+        if getattr(ctx.ship, "independent", False):
             t0 = liftoff + m.deployment.first_met_s - 60.0
             t1 = liftoff + (m.deployment.last_met_s or m.deployment.first_met_s) + 60.0
             ctx.release_estimates = estimate_release_times(ctx.group, t0, t1, ship=ctx.ship, dt=0.5,
@@ -132,4 +132,8 @@ def _ship_ephemeris(cfg: Config, liftoff: float, ctx: MissionContext) -> ShipEph
         if not recs:
             raise ValueError(f"no records in {spec[4:]}")
         return SGP4ShipEphemeris(recs[0])
+    if spec.startswith("fitted:"):
+        from ..orbit.fit_ship import FittedShipEphemeris
+
+        return FittedShipEphemeris.load(spec[7:])
     raise ValueError(f"unknown mission.ship_ephemeris {spec!r}")

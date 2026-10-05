@@ -271,7 +271,7 @@ class MissionCfg:
     deployment: DeploymentScheduleCfg = field(default_factory=DeploymentScheduleCfg)
     payload_group: PayloadGroupCfg = field(default_factory=PayloadGroupCfg)
     ship_ephemeris: str = "nominal"  # nominal | omm:<path> | group_centroid
-    catalog_file: str | None = None  # OMM JSON used for association / screening
+    catalog_file: str | list[str] | None = None  # OMM JSON file(s) used for association / screening
 
 
 @dataclass

@@ -86,7 +86,12 @@ def estimate_release_times(
     t_sig = samples.std(axis=0)
     # a minimum on the window edge means the closest approach was not found: not identifiable
     edge = (np.abs(t_hat - t[0]) < 1.5 * dt) | (np.abs(t_hat - t[-1]) < 1.5 * dt)
-    t_sig = np.where(edge, np.inf, t_sig)
+    # an object released from the ship passes within metres of it; if the propagated elements never
+    # come within a few sigma of the ship, they are not valid back to the release (orbit raising,
+    # drag or a stale epoch) and the "closest approach" time means nothing
+    ship_sig = float(getattr(ship, "position_sigma_km", np.nan)) if ship is not None else np.nan
+    reach = max(5.0, 3.0 * float(np.hypot(along_track_sigma_km, ship_sig if np.isfinite(ship_sig) else 0.0)))
+    t_sig = np.where(edge | (dmin > reach), np.inf, t_sig)
     return [
         ReleaseEstimate(prop.ids[i], prop.names[i], float(t_hat[i]), float(t_sig[i]), float(dmin[i]), method)
         for i in range(len(records))

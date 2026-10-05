@@ -33,12 +33,17 @@ from .propagate import Propagator
 class ShipEphemeris:
     description = "abstract"
     position_sigma_km = float("nan")
+    # True when the estimate does not come from the payloads' own along-track positions, so it can
+    # serve as the reference for release-time estimates
+    independent = False
 
     def state(self, utc) -> tuple[np.ndarray, np.ndarray]:  # pragma: no cover - interface
         raise NotImplementedError
 
 
 class SGP4ShipEphemeris(ShipEphemeris):
+    independent = True
+
     def __init__(self, record: OMMRecord, position_sigma_km: float = 2.0):
         self.record = record
         self._p = Propagator([record])

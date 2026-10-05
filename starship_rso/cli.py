@@ -166,7 +166,7 @@ def _liftoff(cfg):
 
 
 def _ship(cfg, liftoff):
-    from .orbit.omm import load_omm_json
+    from .orbit.omm import load_catalog, load_omm_json
     from .orbit.ship import GroupCentroidEphemeris, NominalShipEphemeris, SGP4ShipEphemeris
 
     spec = cfg.mission.ship_ephemeris
@@ -174,11 +174,15 @@ def _ship(cfg, liftoff):
         return NominalShipEphemeris.from_mission(cfg.mission, liftoff)
     if spec.startswith("omm:"):
         return SGP4ShipEphemeris(load_omm_json(spec[4:])[0])
+    if spec.startswith("fitted:"):
+        from .orbit.fit_ship import FittedShipEphemeris
+
+        return FittedShipEphemeris.load(spec[7:])
     if spec == "group_centroid":
         from .orbit.catalog import select_records
 
         pg = cfg.mission.payload_group
-        recs = select_records(load_omm_json(cfg.mission.catalog_file), pg.norad_range, pg.name_contains, pg.intdes)
+        recs = select_records(load_catalog(cfg.mission.catalog_file), pg.norad_range, pg.name_contains, pg.intdes)
         return GroupCentroidEphemeris(recs)
     sys.exit(f"unknown ship_ephemeris {spec}")
 
@@ -201,15 +205,71 @@ def cmd_ship(args):
     print("Compare with the HUD (the SpaceX overlay speed matches the ground-relative value).")
 
 
+def cmd_fit_ship(args):
+    from .io.timemap import TimeMap
+    from .orbit.fit_ship import FittedShipEphemeris, fit_ship, load_hud_series, plane_from_group, plane_from_site
+    from .orbit.frames import ecef_to_geodetic, teme_to_ecef
+    from .orbit.ship import NominalShipEphemeris
+
+    cfg = _cfg(args)
+    L = _liftoff(cfg)
+    tm = TimeMap.from_config(cfg.timemap, cfg.mission.liftoff_utc)
+    if not tm.is_calibrated:
+        sys.exit("the time map has no anchors: run `rso ocr` first")
+    series = load_hud_series(args.hud, tm, every_s=args.every)
+    epoch_met = float(np.median(series.met))
+    nominal = NominalShipEphemeris.from_mission(cfg.mission, L)
+    if args.group:
+        from .orbit.catalog import select_records
+        from .orbit.omm import load_omm_json
+
+        pg = cfg.mission.payload_group
+        recs = select_records(load_omm_json(args.group), pg.norad_range, pg.name_contains, pg.intdes)
+        first: dict = {}
+        for r in recs:  # earliest element set per object: least orbit raising since release
+            if r.norad_id not in first or r.epoch_utc < first[r.norad_id].epoch_utc:
+                first[r.norad_id] = r
+        inc, raan, n = plane_from_group(list(first.values()), L + epoch_met)
+        src = f"payload group ({n} objects, earliest element sets)"
+    else:
+        from .orbit.kepler import j2_rates
+
+        m = cfg.mission
+        inc, raan0 = plane_from_site(L, m.launch_site.lat_deg, m.launch_site.lon_deg, m.orbit_nominal.inc_deg,
+                                     m.orbit_nominal.launch_pass)
+        rd, _, _ = j2_rates(6378.137 + 0.5 * (m.orbit_nominal.perigee_km + m.orbit_nominal.apogee_km), 0.001, inc)
+        raan = raan0 + rd * epoch_met
+        src = "launch site + inclination"
+    print(f"HUD series: {len(series.met)} samples over MET {series.met.min():.0f}-{series.met.max():.0f} s "
+          f"(altitude {np.isfinite(series.alt_km).sum()}, speed {np.isfinite(series.speed_kmh).sum()})")
+    print(f"orbital plane from {src}: i = {np.rad2deg(inc):.3f} deg, RAAN = {np.rad2deg(raan) % 360:.3f} deg (TEME)")
+    fit = fit_ship(series, L, inc, raan, src, epoch_met=epoch_met, prior=nominal)
+    fit.save(args.out)
+    print("altitude convention   rms altitude   rms speed   (display resolution alone gives 0.29 / 0.29)")
+    for mode, a in fit.alternatives.items():
+        mark = "  <- best" if mode == fit.alt_mode else ""
+        print(f"  {mode:<12}        {a['rms_alt_km']:7.3f} km   {a['rms_speed_kmh']:7.3f} km/h{mark}")
+    print(f"orbit {fit.perigee_km:.1f} x {fit.apogee_km:.1f} km, i {fit.inc_deg:.3f} deg; along-track 1-sigma "
+          f"{fit.u_sigma_deg:.3f} deg = {fit.position_sigma_km:.1f} km")
+    eph = FittedShipEphemeris(fit)
+    print("   MET    lat      lon     alt   offset from nominal (km)")
+    for met in (args.met_marks or [500, 2063, 2976, 3034, 3878]):
+        r, v = eph.state(L + met)
+        rn, _ = nominal.state(L + met)
+        lat, lon, alt = ecef_to_geodetic(teme_to_ecef(r, L + met))
+        print(f"  {met:6.0f} {float(lat):7.2f} {float(lon):8.2f} {float(alt):7.1f}   {np.linalg.norm(rn - r):8.1f}")
+    print(f"wrote {args.out}; use it with  mission.ship_ephemeris: fitted:{args.out}")
+
+
 def cmd_screen(args):
     from .orbit.conjunction import phase_sweep, screen
-    from .orbit.omm import load_omm_json
+    from .orbit.omm import load_catalog
     from .orbit.propagate import Propagator
 
     cfg = _cfg(args)
     L = _liftoff(cfg)
     ship = _ship(cfg, L)
-    recs = load_omm_json(args.catalog or cfg.mission.catalog_file)
+    recs = load_catalog(args.catalog or cfg.mission.catalog_file)
     if args.best_epoch:
         from .orbit.catalog import best_record_per_object
 
@@ -218,23 +278,33 @@ def cmd_screen(args):
         ships, spacing = [ship], 0.0
     else:
         ships, spacing = phase_sweep(ship, args.range_km)
+    extra = 0.5 * spacing
+    if spacing == 0 and np.isfinite(getattr(ship, "position_sigma_km", np.nan)):
+        extra = 3.0 * ship.position_sigma_km  # a single ship estimate: widen by its 3-sigma uncertainty
     hits = screen(Propagator(recs), ships, L + args.met_from, L + args.met_to, args.range_km,
-                  ifov_rad=np.deg2rad(cfg.camera.hfov_deg) / args.width, extra_radius_km=0.5 * spacing)
+                  ifov_rad=np.deg2rad(cfg.camera.hfov_deg) / args.width, extra_radius_km=extra)
+    print(f"ship: {ship.description}")
     if spacing > 0:
         print(f"phase sweep: {len(ships)} ship hypotheses {spacing:.0f} km apart; screen radius widened by "
-              f"{0.5 * spacing:.0f} km so nothing falls between them")
+              f"{extra:.0f} km so nothing falls between them")
+    elif extra > 0:
+        print(f"screen radius widened by {extra:.0f} km (3 x the ship's position uncertainty)")
     out = [h.to_dict() for h in hits]
     Path(args.out).write_text(json.dumps(out, indent=1))
     print(f"{len(recs)} objects screened over MET {args.met_from}-{args.met_to} s with {len(ships)} ship hypotheses")
     print(f"{len(hits)} within {args.range_km} km; visible by the photometric model: {sum(h.visible_est for h in hits)}")
+    epoch = {str(r.key): r.epoch_utc for r in recs}
     for h in hits[:25]:
+        age = (epoch.get(str(h.norad_id), np.nan) - h.t_closest_utc) / 86400.0
+        flag = "  STALE: >1 day of propagation" if abs(age) > 1.0 else ""
         print(f"  {h.norad_id:>7} {h.name[:24]:<24} {h.range_min_km:8.1f} km  MET {h.t_closest_utc - L:7.1f}  "
-              f"lit={h.sunlit} mag~{h.mag_est:5.1f} size~{h.size_px_est:6.2f}px visible={h.visible_est}")
+              f"lit={h.sunlit} mag~{h.mag_est:5.1f} size~{h.size_px_est:6.2f}px visible={h.visible_est}  "
+              f"elements {age:+.1f} d{flag}")
 
 
 def cmd_release_times(args):
     from .orbit.catalog import best_record_per_object, select_records
-    from .orbit.omm import load_omm_json
+    from .orbit.omm import load_catalog
     from .orbit.release import estimate_release_times
 
     cfg = _cfg(args)
@@ -246,22 +316,27 @@ def cmd_release_times(args):
         sys.exit("no catalogue: pass --catalog or set mission.catalog_file (see `rso fetch-catalog`)")
     if d.first_met_s is None or d.last_met_s is None:
         sys.exit("mission.deployment.first_met_s / last_met_s are not set")
-    recs = select_records(load_omm_json(path), pg.norad_range, pg.name_contains, pg.intdes)
+    recs = select_records(load_catalog(path), pg.norad_range, pg.name_contains, pg.intdes)
     recs = best_record_per_object(recs, L + (d.first_met_s or 0), "retrospective")
     if not recs:
         sys.exit("no payload-group records selected (check mission.payload_group)")
     ship = None
-    if cfg.mission.ship_ephemeris.startswith("omm:"):
+    if cfg.mission.ship_ephemeris.startswith(("omm:", "fitted:")):
         ship = _ship(cfg, L)
+        print(f"ship: {ship.description}")
     else:
-        print("WARNING: no independent ship ephemeris (mission.ship_ephemeris=omm:<file>); the group centroid is a "
-              "biased reference, so these release times cannot identify release slots")
+        print("WARNING: no independent ship ephemeris (mission.ship_ephemeris=omm:<file> or fitted:<file>); the group "
+              "centroid is a biased reference, so these release times cannot identify release slots")
     est = estimate_release_times(recs, L + d.first_met_s - 120, L + d.last_met_s + 120, ship=ship,
                                  along_track_sigma_km=args.along_track_sigma_km)
     sp = (d.last_met_s - d.first_met_s) / max(d.count - 1, 1)
     print(f"{len(est)} objects; release spacing {sp:.1f} s; method {est[0].method}")
-    for e in sorted(est, key=lambda e: e.t_release_utc):
-        print(f"  {e.norad_id:>7} {e.name[:24]:<24} MET {e.t_release_utc - L:8.1f} +/- {e.t_sigma_s:6.1f} s  min sep {e.min_sep_km:6.2f} km")
+    for e in sorted(est, key=lambda e: (not np.isfinite(e.t_sigma_s), e.t_release_utc)):
+        note = "" if np.isfinite(e.t_sigma_s) else "  (never near the ship: elements not valid back to release)"
+        print(f"  {e.norad_id:>7} {e.name[:24]:<24} MET {e.t_release_utc - L:8.1f} +/- {e.t_sigma_s:6.1f} s  "
+              f"min sep {e.min_sep_km:7.2f} km{note}")
+    ages = [(r.epoch_utc - L) / 86400.0 for r in recs]
+    print(f"element sets used: epochs {min(ages):.2f}-{max(ages):.2f} days after liftoff")
     med = float(np.median([e.t_sigma_s for e in est]))
     verdict = "separable" if (ship is not None and med < 0.3 * sp) else "NOT separable (identity stays a candidate list)"
     print(f"median sigma {med:.1f} s vs spacing {sp:.1f} s -> {verdict}")
@@ -554,6 +629,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--met-to", type=float, default=4000)
     p.add_argument("--step", type=float, default=250)
     p.set_defaults(fn=cmd_ship)
+
+    p = sub.add_parser("fit-ship", help="fit the ship orbit to the HUD altitude/speed readings")
+    _add_cfg(p)
+    p.add_argument("--hud", default="hud_readings.csv", help="CSV written by `rso ocr`")
+    p.add_argument("--group", help="OMM JSON of the deployed payload group (gives the orbital plane)")
+    p.add_argument("--every", type=float, default=2.0, help="seconds per fitted sample")
+    p.add_argument("--met-marks", type=float, nargs="*", help="METs at which to print the ship position")
+    p.add_argument("--out", default="data/ship/ship_fit.json")
+    p.set_defaults(fn=cmd_fit_ship)
 
     p = sub.add_parser("screen", help="catalogued objects near the ship")
     _add_cfg(p)
