@@ -215,3 +215,27 @@ def test_small_steady_blob_in_open_sky_is_not_masked_as_ship():
         _spot(g, 160.0, 60.0, 150.0, 4.0)  # steady bright point with a glow
         m.update(g, k / 30, np.eye(3), False, static_background=True)
     assert m.mask[200, 160] and not m.mask[60, 160]
+
+
+def test_slow_noisy_earth_drift_is_registered_not_called_static(rng):
+    """Late in shot S18 the Earth drifts ~0.5 px/frame while compression scatters each corner by
+    ~0.3 px; per-corner tests called it 'fixed in the image' and the clouds flooded the detector."""
+    import cv2
+
+    from conftest import cloud_texture
+    from starship_rso.config import RegistrationCfg
+    from starship_rso.vision.registration import BackgroundRegistrar
+
+    h, w = 360, 640
+    base = cloud_texture(h, w, rng, scale=3.0)
+    base = 100 + (base - base.mean()) * 0.5  # low contrast: ~0.3-0.4 px of LK scatter per corner
+    reg = BackgroundRegistrar(RegistrationCfg(work_width=w), (h, w))
+    moving = 0
+    for k in range(8):
+        a = cv2.warpAffine(base, np.float32([[1, 0, 0.0], [0, 1, 0.45 * k]]), (w, h), borderMode=cv2.BORDER_REFLECT)
+        b = cv2.warpAffine(base, np.float32([[1, 0, 0.0], [0, 1, 0.45 * (k + 1)]]), (w, h), borderMode=cv2.BORDER_REFLECT)
+        a = np.clip(a + rng.normal(0, 6.0, a.shape), 0, 255).astype(np.uint8)
+        b = np.clip(b + rng.normal(0, 6.0, b.shape), 0, 255).astype(np.uint8)
+        r = reg.estimate(a, b, None, 1 / 30)
+        moving += int(r.valid and not r.static_background and abs(r.H[1, 2] - 0.45) < 0.15)
+    assert moving >= 7, moving

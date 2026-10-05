@@ -197,48 +197,51 @@ class BackgroundRegistrar:
         a, b = pts.reshape(-1, 2)[ok], nxt.reshape(-1, 2)[ok]
         if len(a) < c.min_inliers:
             return too_few("too few consistent tracks", len(a))
-        # Camera-fixed structure (the ship) produces zero-motion corners that would pull the fit
-        # toward the identity. If enough corners move coherently over a real part of the image,
-        # the background is what moves: fit those. If the moving corners are few, scattered or
-        # incoherent (particles and payloads crossing a black sky in front of a textured ship),
-        # the background is fixed in the image.
+        # Which corners belong to the background? Two candidate sets are tried:
+        #  1. corners that clearly move (> static_px). Before the ship is masked, its camera-fixed
+        #     corners would otherwise pull the fit toward "no motion".
+        #  2. all corners. A slowly drifting Earth (well under static_px per frame) still has a
+        #     measurable, coherent motion; it accumulates over the longer residual baselines.
+        # A set counts as the moving background only if its inliers are numerous, cover a real part
+        # of the image and the motion they imply is significant given their scatter; LK noise on
+        # faint camera-fixed corners (a dark hull on black sky) implies no significant motion.
+        # Otherwise the background is fixed in the image, or incoherent.
         disp = np.linalg.norm(b - a, axis=1)
         moving = disp > c.static_px
-        n_static = int((~moving).sum())
         usable = float(sel.sum()) if sel.any() else float(p.size)
-        static = None
-        if n_static >= c.min_inliers:
-            static = Registration(ident, True, n_points=len(a), n_inliers=n_static,
-                                  rms=float(np.sqrt(np.mean(disp[~moving] ** 2)) / min(self.sx, self.sy)), dt=dt,
-                                  reason="background fixed in the image", static_background=True)
+        best = None
+        candidates = []
         if moving.sum() >= c.min_inliers:
-            am, bm = a[moving], b[moving]
+            candidates.append((a[moving], b[moving]))
+        candidates.append((a, b))
+        for am, bm in candidates:
             Hw, inl, model = self._fit_supported(am, bm, usable)
-            if Hw is not None:
-                n_in = int(inl.sum())
-                spread = cv2.contourArea(cv2.convexHull(am[inl].astype(np.float32))) / usable if n_in >= 3 else 0.0
-                # real motion is explained far better by the model than by "no motion"; LK noise on
-                # faint camera-fixed corners (a dark hull on black sky) is explained about equally well
-                r_id = float(np.sqrt(np.mean(np.sum((bm[inl] - am[inl]) ** 2, axis=1)))) if n_in else 0.0
-                r_mod = float(np.sqrt(np.mean(np.sum((apply_h(Hw, am[inl]) - bm[inl]) ** 2, axis=1)))) if n_in else 0.0
-                if (n_in >= max(c.min_inliers, 0.5 * len(am)) and spread >= c.min_moving_spread
-                        and r_id > 2.0 * r_mod + 0.1):
-                    a, b = am, bm
-                elif static is not None:
-                    return static
-                else:
-                    return Registration(ident, False, n_points=len(am), n_inliers=n_in, dt=dt, reason="incoherent motion")
-            elif static is not None:
-                return static
-        elif static is not None:
-            return static
-        else:
-            Hw, inl, model = self._fit_supported(a, b, usable)
-        if Hw is None or inl is None:
-            return Registration(ident, False, n_points=len(a), dt=dt, reason="model fit failed")
+            if Hw is None:
+                continue
+            n_in = int(inl.sum())
+            if n_in < max(c.min_inliers, 0.5 * len(am)):
+                continue
+            spread = cv2.contourArea(cv2.convexHull(am[inl].astype(np.float32))) / usable if n_in >= 3 else 0.0
+            # Is the fitted motion significant? Compare the motion the model predicts at the inliers
+            # with the model's own uncertainty (per-corner scatter / sqrt(inliers per parameter)).
+            # Heavily compressed video gives ~0.3 px of scatter per corner, yet hundreds of corners
+            # pin a 0.3 px/frame Earth drift down to a few hundredths of a pixel.
+            pred = apply_h(Hw, am[inl]) - am[inl]
+            m_pred = float(np.sqrt(np.mean(np.sum(pred**2, axis=1))))
+            r_mod = float(np.sqrt(np.mean(np.sum((apply_h(Hw, am[inl]) - bm[inl]) ** 2, axis=1))))
+            se = max(r_mod, 0.05) * np.sqrt(8.0 / n_in)
+            if spread >= c.min_moving_spread and m_pred > max(3.0 * se, 0.05):
+                best = (am, bm, Hw, inl)
+                break
+        if best is None:
+            n_static = int((~moving).sum())
+            if n_static >= c.min_inliers:
+                return Registration(ident, True, n_points=len(a), n_inliers=n_static,
+                                    rms=float(np.sqrt(np.mean(disp[~moving] ** 2)) / min(self.sx, self.sy)), dt=dt,
+                                    reason="background fixed in the image", static_background=True)
+            return Registration(ident, False, n_points=len(a), dt=dt, reason="incoherent motion")
+        a, b, Hw, inl = best
         n_in = int(inl.sum())
-        if n_in < max(c.min_inliers, 0.5 * len(a)):
-            return Registration(ident, False, n_points=len(a), n_inliers=n_in, dt=dt, reason="incoherent motion")
         res = np.linalg.norm(apply_h(Hw, a[inl]) - b[inl], axis=1)
         H = scale_homography_xy(Hw, self.sx, self.sy)
         return Registration(
