@@ -10,7 +10,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[train,dev]"          # numpy, opencv, sgp4, torch (MPS on Apple silicon), sklearn, pytest
 brew install ffmpeg yt-dlp tesseract   # video tools and optional HUD OCR
 pip install pytesseract av             # optional: OCR + exact timestamps
-python -m pytest -q                    # 72 tests, about 1 minute; all must pass
+python -m pytest -q                    # 73 tests, about 1 minute; all must pass
 ```
 
 - On macOS, `opencv-python` and `av` each bundle FFmpeg's `libavdevice`, so every command prints two `objc[...] Class AVF... is implemented in both` lines. They concern camera/microphone capture, which this project never uses, so they are harmless here. To silence them, `export RSO_VIDEO_BACKEND=opencv` (PyAV is then never imported; timestamps come from OpenCV, which is exact for constant-frame-rate files like the rebroadcast).
@@ -98,15 +98,19 @@ rso fetch-catalog --source spacetrack --epoch-from 2026-09-27 --epoch-to 2026-09
 ## 6. Orbit analyses (minutes, CPU)
 
 ```bash
-rso ship -c configs/default.yaml -c configs/flight14.yaml           # compare altitude/speed with the HUD
-rso screen -c configs/default.yaml -c configs/flight14.yaml --catalog data/catalog/all_0928.json \
-  --met-from 2040 --met-to 3900 --range-km 100 --best-epoch
+# ship orbit fitted to the HUD altitude/speed, plane from the deployed group (done for Flight 14)
+rso fit-ship -c configs/default.yaml -c configs/flight14.yaml --hud hud_readings.csv \
+  --group data/catalog/f14_group.json --out data/ship/f14_ship_fit.json
+# who came near the ship (uses mission.catalog_file and the fitted ship)
+rso screen -c configs/default.yaml -c configs/flight14.yaml --met-from 2040 --met-to 3900 --range-km 100 --best-epoch
+# can release slots be mapped to catalogue numbers?
 rso release-times -c configs/default.yaml -c configs/flight14.yaml
 ```
 
-- `screen` answers "could any foreign satellite have been visible?". Expect none within a few km; that is a result for the report.
-- `release-times` prints whether release slots are separable from the element sets. If it says NOT separable, the demo shows `DEPLOY-k` with a candidate list, which is the honest answer.
-- Better ship ephemeris: once group elements exist, try `mission.ship_ephemeris: group_centroid`.
+- `fit-ship` must reproduce the HUD to its display resolution (about 0.29 km and 0.29 km/h rms); it also reports which altitude convention the overlay uses. The telemetry fixes the phase modulo half an orbit; the launch geometry picks the branch.
+- `screen` answers "could any catalogued satellite have been visible?". Rows marked STALE use element sets more than a day from the flight and are not trustworthy that close to the ship.
+- `release-times` prints whether release slots are separable. If it says NOT separable, the demo shows `DEPLOY-k` with a candidate list, which is the honest answer.
+- Flight 14 results are in `docs/FLIGHT14_NOTES.md`.
 
 ## 7. Camera calibration (needed for any geometric identity)
 

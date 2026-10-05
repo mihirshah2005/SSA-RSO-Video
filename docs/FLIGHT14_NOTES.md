@@ -43,3 +43,35 @@ Recommended clips: **S18 (video 2976-3034)** for particles over a moving Earth a
   - Track classification ran on every track every 5 frames, which dominated the cost with hundreds of particles in view. Each track is now reclassified only after 10 new observations.
   - Re-measurement now converges faster (measurement windows only grow).
 - **Payload labels:** 52 release labels were created in S18 because no door position is set. A release event now requires `deployment.door_xy`; without it, "payload" stays a category only.
+
+## Catalogue and orbit results (5 Oct)
+
+**Catalogue.** Flight 14 is **2026-225**. The 26 Starlink V3s are NORAD 100855-100880, STARLINK-40075 to 40103. Space-Track `gp_history` gave 286 element sets between 30 Sep and 5 Oct, and the whole catalogue around the flight has 29,363 objects.
+
+**Ship orbit fitted to the HUD** (`rso fit-ship`):
+- The plane comes from the 26 V3s: i = 30.48 deg, RAAN 339.17 deg (TEME at MET 2970 s). This agrees with the plane through Starbase at liftoff to within 1.7 deg of RAAN.
+- The fit uses altitude above the WGS84 ellipsoid and ground-relative speed. It reproduces 816 altitude and 930 speed samples (MET 2025-3883 s) to **0.29 km and 0.29 km/h rms**, which is the display's own resolution. Spherical or equatorial altitude conventions fit 6-7 times worse.
+- The orbit is **264.6 x 281.1 km** (published nominal: 262 x 277 km). Along-track uncertainty is **0.12 deg = 13.6 km (1 sigma)**; a Monte Carlo on synthetic telemetry confirms the error estimate is calibrated.
+- The fitted ship is 150-195 km behind the nominal model, which is well inside the nominal's 600 km uncertainty.
+- Ship positions:
+  - first release (MET 2063 s): lat -25.4, lon 4.2 (South Atlantic)
+  - shots S18/S19 (video 2976-3074 s): lat about -26, lon 69-73 (southern Indian Ocean)
+
+**Release slots cannot be mapped to catalogue numbers from public data.**
+- The first public element sets are 2.13 days after launch, and orbit raising had already begun: the drag term is negative (thrust), and the orbit is 270 x 272 km, rising to 296 km circular by 5 Oct.
+- Propagated back to the deployment window, the 26 V3s pass 13-1,650 km from the fitted ship instead of within metres. `rso release-times` therefore reports NOT separable.
+- The display keeps `DEPLOY-k` local labels with a candidate list, which is the honest output.
+
+**No foreign catalogued object came near the ship.** Screening all 29,363 objects against the fitted ship (100 km, widened by 3 sigma = 41 km):
+
+| Object | Closest | Video time (shot) | Where | Angular rate |
+|---|---|---|---|---|
+| STARLINK-11422 (61944) | 107 km | 3126 s (S20, aft camera, looks down) | 97 km above | 4.7 deg/s |
+| STARLINK-11297 (61060) | 113 km | 2407 s (S08, side camera) | 93 km above | 2.7 deg/s |
+| STARLINK-38234 (100552) | 131 km | 3260 s (S22, night, unlit) | 75 km above | 4.9 deg/s |
+| STARLINK-2448 (48111) | 135 km | 2565 s (S11, flap-top camera, black sky) | almost straight overhead | 2.6 deg/s |
+
+- All four passed 75-135 km *above* the ship.
+- STARLINK-2448 is the best chance of a real catalogued object on screen: sunlit, magnitude about +1, in a shot with black sky. In S11 the Earth limb runs down the right side, so the zenith lies about 100 deg from the limb direction, probably outside the field of view.
+- Confirming this needs the camera's pointing, best from the stars visible in the same camera's shot S19 (plate solving).
+- Conclusion for the report: the moving white dots in the deployment footage are near-field particles, not catalogued satellites. The only nameable objects are Flight 14's own V3s, and public data cannot tell them apart.
