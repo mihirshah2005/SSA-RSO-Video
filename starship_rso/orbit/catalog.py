@@ -25,6 +25,7 @@ import hashlib
 import json
 import logging
 import os
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -150,6 +151,13 @@ class SpaceTrackClient:
         self._last = 0.0
 
     def _login(self):
+        if (not self.user or not self.password) and sys.stdin is not None and sys.stdin.isatty():
+            # prompting keeps the password out of the shell history (and away from shell expansion:
+            # zsh rewrites an unquoted "!" in a typed password)
+            import getpass
+
+            self.user = self.user or input("Space-Track user (e-mail): ").strip()
+            self.password = self.password or getpass.getpass("Space-Track password: ")
         if not self.user or not self.password:
             raise CatalogError("set SPACETRACK_USER and SPACETRACK_PASSWORD (free account at space-track.org)")
         import requests

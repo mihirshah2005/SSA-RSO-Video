@@ -32,3 +32,14 @@ Recommended clips: **S18 (video 2976-3034)** for particles over a moving Earth a
   - The vehicle mask now leaves such isolated blobs alone. Steady points away from the ship are no longer called "vehicle features", so they stay eligible for catalogue association.
 - Stars are visible in S19. A plate solve of those frames (for example with astrometry.net) would give the camera's inertial pointing and field of view far more precisely than the limb fit. This is the best route to a calibrated camera, and a calibrated camera is needed before any satellite can be named.
 - Processing time at 1920x1080 is about 130-150 ms per frame on 4 CPU cores. Use `--set processing.scale=0.5` for the live demo, and full resolution with `--no-realtime` for analysis.
+
+## Second run (your Mac, 5 Oct)
+
+- **S18 at full resolution:** 1,741 frames at about 9 frames per second, 4,630 tracks.
+  - Most of the excess came from video 3005-3034 s. There the Earth drifts only about 0.5 px per frame, while compression scatters each tracked corner by about 0.3 px. The registration called the background "fixed in the image", and the clouds then flooded the detector with about 250 detections per frame.
+  - The registration now asks whether the motion fitted to hundreds of corners is statistically significant, not whether each corner moved. Those frames are now registered.
+  - What remains in late S18 is a real burst of particles streaming past the nose.
+- **S19 live at half resolution:** 11 frames per second (loop 70 ms, pipeline 43 ms).
+  - Track classification ran on every track every 5 frames, which dominated the cost with hundreds of particles in view. Each track is now reclassified only after 10 new observations.
+  - Re-measurement now converges faster (measurement windows only grow).
+- **Payload labels:** 52 release labels were created in S18 because no door position is set. A release event now requires `deployment.door_xy`; without it, "payload" stays a category only.

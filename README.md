@@ -16,7 +16,7 @@ Full numbers and sources: [docs/FEASIBILITY.md](docs/FEASIBILITY.md). The live d
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[train,dev]"
-python -m pytest -q                                   # 71 tests incl. end-to-end synthetic runs (-m "not slow" to skip those)
+python -m pytest -q                                   # 72 tests incl. end-to-end synthetic runs (-m "not slow" to skip those)
 
 rso simulate --out data/sim/seed0 --duration 20       # synthetic clip + truth + catalogue + camera
 rso run -c configs/default.yaml -c data/sim/seed0/mission.yaml --video data/sim/seed0/video.mp4 --mode synthetic

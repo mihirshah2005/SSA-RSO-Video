@@ -10,7 +10,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[train,dev]"          # numpy, opencv, sgp4, torch (MPS on Apple silicon), sklearn, pytest
 brew install ffmpeg yt-dlp tesseract   # video tools and optional HUD OCR
 pip install pytesseract av             # optional: OCR + exact timestamps
-python -m pytest -q                    # 71 tests, about 1 minute; all must pass
+python -m pytest -q                    # 72 tests, about 1 minute; all must pass
 ```
 
 - On macOS, `opencv-python` and `av` each bundle FFmpeg's `libavdevice`, so every command prints two `objc[...] Class AVF... is implemented in both` lines. They concern camera/microphone capture, which this project never uses, so they are harmless here. To silence them, `export RSO_VIDEO_BACKEND=opencv` (PyAV is then never imported; timestamps come from OpenCV, which is exact for constant-frame-rate files like the rebroadcast).
@@ -76,17 +76,23 @@ rso run -c configs/default.yaml -c configs/flight14.yaml --video data/videos/f14
 
 ## 5. Catalogue data (STOP: needs a free Space-Track account)
 
+Run these **one line at a time** (pasting a block lets zsh merge lines, and an unquoted `!` in a password triggers zsh history expansion).
+
 ```bash
-export SPACETRACK_USER=...  SPACETRACK_PASSWORD=...
-# confirm the candidate group really is Flight 14 (look for STARLINK names and launch date 2026-09-28)
-curl "https://celestrak.org/satcat/records.php?CATNR=100855&FORMAT=JSON"
-rso fetch-catalog --source spacetrack --norad-range 100855-100880 --epoch-from 2026-09-28 --epoch-to 2026-10-10 \
-  --out data/catalog/f14_group.json
-# whole catalogue near the flight, for the visibility screen (large download, run once)
+# 1. check the candidate group is Flight 14: expect STARLINK names, launch date 2026-09-28
+curl -s "https://celestrak.org/satcat/records.php?CATNR=100855&FORMAT=JSON"
+curl -s "https://celestrak.org/satcat/records.php?CATNR=100880&FORMAT=JSON"
+
+# 2. element-set history of the group (rso asks for the user and password; nothing goes into the shell history)
+rso fetch-catalog --source spacetrack --norad-range 100855-100880 --epoch-from 2026-09-28 --epoch-to 2026-10-05 --out data/catalog/f14_group.json
+
+# 3. every catalogued object with an epoch around the flight, for the visibility screen (large, run once)
 rso fetch-catalog --source spacetrack --epoch-from 2026-09-27 --epoch-to 2026-09-29 --out data/catalog/all_0928.json
 ```
 
-- Update `payload_group.norad_range` / `intdes` in `configs/flight14.yaml` with the confirmed values and set `mission.catalog_file`.
+- If you prefer environment variables, quote the password in single quotes so `!` is not expanded: `export SPACETRACK_PASSWORD='...'`. Or read it without echo: `read -rs "SPACETRACK_PASSWORD?Password: "; export SPACETRACK_PASSWORD`.
+- No Space-Track yet? CelesTrak needs no account (current element sets, labelled retrospective): `rso fetch-catalog --source celestrak --query CATNR --value 100855 --out data/catalog/f14_100855.json`.
+- Then set `payload_group.norad_range` / `intdes` in `configs/flight14.yaml` to the confirmed values and `mission.catalog_file: data/catalog/all_0928.json` (the group file is a subset).
 - If SupGP exists for the V3s, also fetch it (`--endpoint supgp --query INTDES --value 2026-xxx`): operator ephemerides are the only public data that might separate release slots.
 
 ## 6. Orbit analyses (minutes, CPU)
