@@ -20,6 +20,9 @@ data/videos/
 data/frames/
 data/datasets/
 data/catalog_cache/
+# Space-Track data may not be redistributed
+data/catalog/
+data/clips/
 *.mp4
 *.mkv
 *.webm

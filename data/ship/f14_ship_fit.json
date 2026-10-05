@@ -1,0 +1,41 @@
+{
+  "type": "fitted_ship",
+  "epoch_utc": 1790602693.2,
+  "r_teme": [
+    971.6496527546856,
+    -5843.590120103441,
+    -3011.2283017278787
+  ],
+  "v_teme": [
+    7.535443503497175,
+    0.34922161772967897,
+    1.7691243796365796
+  ],
+  "alt_mode": "geodetic",
+  "rms_alt_km": 0.2876852271238035,
+  "rms_speed_kmh": 0.29268081362213283,
+  "n_alt": 816,
+  "n_speed": 930,
+  "perigee_km": 264.56356796932323,
+  "apogee_km": 281.11177983137804,
+  "inc_deg": 30.479662069400085,
+  "raan_deg": 339.17129455361487,
+  "u_deg": 296.7015054848322,
+  "u_sigma_deg": 0.11677199920562659,
+  "position_sigma_km": 13.558110138997028,
+  "plane_source": "payload group (26 objects, earliest element sets)",
+  "alternatives": {
+    "geodetic": {
+      "rms_alt_km": 0.2876852271238035,
+      "rms_speed_kmh": 0.29268081362213283
+    },
+    "spherical": {
+      "rms_alt_km": 1.7733377611219665,
+      "rms_speed_kmh": 0.8088384474879935
+    },
+    "equatorial": {
+      "rms_alt_km": 1.9765845923273508,
+      "rms_speed_kmh": 1.2413891422235532
+    }
+  }
+}

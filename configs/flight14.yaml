@@ -24,8 +24,12 @@ mission:
     intdes: "2026-225"                        # CelesTrak SATCAT: 100855 = STARLINK-40083, 2026-225A, launched 2026-09-28 from STARB
     norad_range: [100855, 100880]             # first object confirmed Flight 14; check 100880 the same way
     name_contains: null
-  ship_ephemeris: nominal                     # nominal | group_centroid | omm:<file>
-  catalog_file: null                          # set to the OMM JSON from `rso fetch-catalog`
+  # fitted to the HUD altitude/speed (rms at display resolution) with the plane from the deployed group:
+  # `rso fit-ship --hud hud_readings.csv --group data/catalog/f14_group.json --out data/ship/f14_ship_fit.json`
+  ship_ephemeris: fitted:data/ship/f14_ship_fit.json   # nominal | group_centroid | omm:<file> | fitted:<file>
+  catalog_file:                               # from `rso fetch-catalog` (Space-Track data: keep out of git)
+    - data/catalog/all_0928.json              # every object with an epoch 27-29 Sep
+    - data/catalog/f14_group.json             # the 26 V3s (first element sets 30 Sep, after orbit raising began)
 
 timemap:
   # From `rso ocr` on the YouTube rebroadcast (3CVoSPIMx6I), video 2040-3900 s: 1,723 clock
