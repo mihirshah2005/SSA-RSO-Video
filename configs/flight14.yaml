@@ -10,7 +10,7 @@ mission:
   orbit_nominal:
     perigee_km: 262.0                         # NASASpaceflight: 262 x 277 km
     apogee_km: 277.0
-    inc_deg: 30.5                             # VERIFY: Wikipedia/McDowell 30.5, NSF 32
+    inc_deg: 30.5                             # SATCAT 2026-225A: 30.49 deg (confirmed 5 Oct 2026)
     insertion_met_s: 1520.0                   # T+25:20 orbit insertion burn
     launch_pass: descending                   # ESE launch azimuth from Starbase
     downrange_deg_at_seco: null               # angle from the launch site at SECO (T+8:11); null = 14 deg assumption
@@ -21,8 +21,8 @@ mission:
     count: 26
   payload_group:
     name: "Starlink Group 31-1 (26 x V3)"
-    intdes: null                              # VERIFY: COSPAR id once published
-    norad_range: [100855, 100880]             # CANDIDATE ONLY: 26 objects catalogued 2 Oct 2026, not yet linked to Flight 14
+    intdes: "2026-225"                        # CelesTrak SATCAT: 100855 = STARLINK-40083, 2026-225A, launched 2026-09-28 from STARB
+    norad_range: [100855, 100880]             # first object confirmed Flight 14; check 100880 the same way
     name_contains: null
   ship_ephemeris: nominal                     # nominal | group_centroid | omm:<file>
   catalog_file: null                          # set to the OMM JSON from `rso fetch-catalog`

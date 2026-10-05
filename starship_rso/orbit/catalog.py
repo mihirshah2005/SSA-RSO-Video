@@ -167,7 +167,10 @@ class SpaceTrackClient:
         r = s.post(f"{SPACETRACK_BASE}/ajaxauth/login", data={"identity": self.user, "password": self.password}, timeout=60)
         self._last = time.time()
         if r.status_code != 200 or "Failed" in r.text:
-            raise CatalogError(f"Space-Track login failed (HTTP {r.status_code})")
+            raise CatalogError(
+                f"Space-Track login failed (HTTP {r.status_code}): wrong user/password, or the account is not "
+                "activated yet (log in once at space-track.org). Credentials come from SPACETRACK_USER/"
+                "SPACETRACK_PASSWORD if set; 'unset SPACETRACK_USER SPACETRACK_PASSWORD' to be prompted instead.")
         self._session = s
 
     def _throttle(self) -> None:
